@@ -8,7 +8,7 @@ import { getEpisodes, getServers, getEmbedUrl } from './scrapers/senshi';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
-import { getAnimeDetails } from './scrapers/mal';
+import { getAnimeDetails, getEpisodes as getMalEpisodes } from './scrapers/mal';
 
 const router = Router();
 
@@ -644,6 +644,19 @@ router.get('/mal/anime/:id', async (req: Request, res: Response) => {
     return res.json(details);
   } catch (e: any) {
     return res.status(502).json({ error: 'MAL scrape failed', detail: e?.message || String(e) });
+  }
+});
+
+router.get('/mal/anime/:id/episodes', async (req: Request, res: Response) => {
+  const malId = parseInt(req.params.id, 10);
+  if (isNaN(malId)) return res.status(400).json({ error: 'id must be a number' });
+  const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+  if (isNaN(page) || page < 1) return res.status(400).json({ error: 'page must be a positive number' });
+  try {
+    const result = await getMalEpisodes(malId, page);
+    return res.json(result);
+  } catch (e: any) {
+    return res.status(502).json({ error: 'MAL episode scrape failed', detail: e?.message || String(e) });
   }
 });
 
