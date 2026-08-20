@@ -187,3 +187,110 @@ export async function getAnimeDetails(malId: number): Promise<MalAnimeDetails | 
   if (result) cacheSet(cacheKey, result, 'mapping');
   return result;
 }
+
+// ══════════════════════════════════════════════════════════════
+// Episode list — /anime/{id}/_/episode
+//
+// MAL's routing keys off the numeric ID; the slug segment is cosmetic and
+// tolerates a placeholder ("_"), so we skip resolving the real title slug.
+// The page paginates 100 episodes at a time via ?offset=N. Shape mirrors
+// Jikan's /anime/{id}/episodes response (mal_id, title, aired, filler,
+// recap, pagination.has_next_page) so the PHP side is close to a drop-in
+// swap.
+// ══════════════════════════════════════════════════════════════
+
+export interface MalEpisode {
+  malId: number; // episode number, matching Jikan's mal_id field on episode objects
+  url: string;
+  title: string;
+  titleJapanese: string | null;
+  aired: string | null;
+  filler: boolean;
+  recap: boolean;
+}
+
+export interface MalEpisodePage {
+  data: MalEpisode[];
+  pagination: {
+    currentPage: number;
+    hasNextPage: boolean;
+  };
+}
+
+const EPISODES_PER_PAGE = 100;
+
+function parseEpisodeRows($: Doc, malId: number): MalEpisode[] {
+  const episodes: MalEpisode[] = [];
+
+  $('tr').each((_, tr) => {
+    const row = $(tr);
+    const numCell = row.find('td.episode-number');
+    if (!numCell.length) return; // not an episode row (header/other tr)
+
+    const num = parseInt(numCell.text().trim(), 10);
+    if (isNaN(num)) return;
+
+    const titleCell = row.find('td.episode-title');
+    const link = titleCell.find('a').first();
+    const title = link.text().trim();
+    if (!title) return;
+
+    const titleJapanese = titleCell.find('span').first().text().trim() || null;
+    const aired = row.find('td.episode-aired').text().trim() || null;
+    const cellText = titleCell.text().toLowerCase();
+
+    const href = link.attr('href') || null;
+    const url = href ? (href.startsWith('http') ? href : `${BASE}${href}`) : `${BASE}/anime/${malId}/_/episode/${num}`;
+
+    episodes.push({
+      malId: num,
+      url,
+      title,
+      titleJapanese,
+      aired,
+      filler: cellText.includes('filler'),
+      recap: cellText.includes('recap'),
+    });
+  });
+
+  return episodes;
+}
+
+async function scrapeEpisodePage(malId: number, page: number): Promise<MalEpisodePage> {
+  const offset = (page - 1) * EPISODES_PER_PAGE;
+  const res = await http.get(`/anime/${malId}/_/episode`, { params: offset ? { offset } : {} });
+  const $ = cheerio.load(res.data);
+  const data = parseEpisodeRows($, malId);
+
+  return {
+    data,
+    pagination: {
+      currentPage: page,
+      hasNextPage: data.length === EPISODES_PER_PAGE,
+    },
+  };
+}
+
+export async function getEpisodes(malId: number, page = 1): Promise<MalEpisodePage> {
+  const cacheKey = `mal:episodes:${malId}:${page}`;
+  const cached = cacheGet<MalEpisodePage>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeEpisodePage(malId, page));
+  cacheSet(cacheKey, result, 'episodes');
+  return result;
+}
+
+// Convenience: fetch every page and flatten, for callers that want the
+// full episode list in one call instead of paging themselves.
+export async function getAllEpisodes(malId: number): Promise<MalEpisode[]> {
+  const all: MalEpisode[] = [];
+  let page = 1;
+  while (true) {
+    const { data, pagination } = await getEpisodes(malId, page);
+    all.push(...data);
+    if (!pagination.hasNextPage) break;
+    page++;
+  }
+  return all;
+}
