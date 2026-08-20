@@ -8,7 +8,7 @@ import { getEpisodes, getServers, getEmbedUrl } from './scrapers/senshi';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
-import { getAnimeDetails, getEpisodes as getMalEpisodes, getCharacters } from './scrapers/mal';
+import { getAnimeDetails, getEpisodes as getMalEpisodes, getCharacters, getCharacterDetails } from './scrapers/mal';
 
 const router = Router();
 
@@ -666,6 +666,18 @@ router.get('/mal/anime/:id/characters', async (req: Request, res: Response) => {
   try {
     const result = await getCharacters(malId);
     return res.json({ data: result });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'MAL character scrape failed', detail: e?.message || String(e) });
+  }
+});
+
+router.get('/mal/character/:id', async (req: Request, res: Response) => {
+  const charId = parseInt(req.params.id, 10);
+  if (isNaN(charId)) return res.status(400).json({ error: 'id must be a number' });
+  try {
+    const result = await getCharacterDetails(charId);
+    if (!result) return res.status(404).json({ error: 'Character not found on MAL' });
+    return res.json(result);
   } catch (e: any) {
     return res.status(502).json({ error: 'MAL character scrape failed', detail: e?.message || String(e) });
   }
