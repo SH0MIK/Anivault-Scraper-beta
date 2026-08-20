@@ -221,14 +221,23 @@ const EPISODES_PER_PAGE = 100;
 
 function parseEpisodeRows($: Doc, malId: number): MalEpisode[] {
   const episodes: MalEpisode[] = [];
+  const seen = new Set<number>();
 
   $('tr').each((_, tr) => {
     const row = $(tr);
     const numCell = row.find('td.episode-number');
     if (!numCell.length) return; // not an episode row (header/other tr)
 
-    const num = parseInt(numCell.text().trim(), 10);
-    if (isNaN(num)) return;
+    // MAL renders a "Compact" view alongside the "Detailed" one, toggled
+    // via CSS rather than left out of the DOM. It reuses the same
+    // episode-number/episode-aired classes but as one row summarizing the
+    // whole season, which .text() then concatenates into a single string
+    // (e.g. "123456789101112" for a 12-episode show). A real episode
+    // number is always short — reject anything that isn't.
+    const rawNum = numCell.text().trim();
+    if (!/^\d{1,4}$/.test(rawNum)) return;
+    const num = parseInt(rawNum, 10);
+    if (isNaN(num) || seen.has(num)) return;
 
     const titleCell = row.find('td.episode-title');
     const link = titleCell.find('a').first();
@@ -236,12 +245,15 @@ function parseEpisodeRows($: Doc, malId: number): MalEpisode[] {
     if (!title) return;
 
     const titleJapanese = titleCell.find('span').first().text().trim() || null;
-    const aired = row.find('td.episode-aired').text().trim() || null;
+    let aired = row.find('td.episode-aired').text().trim() || null;
+    // Same concatenation guard as the number check above, applied to aired.
+    if (aired && aired.length > 40) aired = null;
     const cellText = titleCell.text().toLowerCase();
 
     const href = link.attr('href') || null;
     const url = href ? (href.startsWith('http') ? href : `${BASE}${href}`) : `${BASE}/anime/${malId}/_/episode/${num}`;
 
+    seen.add(num);
     episodes.push({
       malId: num,
       url,
