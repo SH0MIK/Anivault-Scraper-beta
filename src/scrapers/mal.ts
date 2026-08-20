@@ -409,3 +409,153 @@ export async function getCharacters(malId: number): Promise<MalCharacter[]> {
   cacheSet(cacheKey, result, 'mapping'); // cast barely changes, reuse 24h bucket
   return result;
 }
+
+// ══════════════════════════════════════════════════════════════
+// Single character page — /character/{id}/_
+//
+// MAL puts bio, anime appearances, and voice actor roles all on ONE page
+// (unlike Jikan, which splits these into 3 separate endpoint calls) --
+// so this replaces 3 Jikan requests with 1 scrape.
+//
+// This is the shakiest of the scrapers so far: the anime/episode/character-
+// list pages all have a fairly rigid table structure I had decent
+// confidence in. This page's "About" bio text has no dedicated wrapper tag
+// (unlike anime's itemprop="description"), so it's extracted by slicing
+// the container's rendered text between "Member Favorites:" and
+// "Animeography" rather than a clean selector -- most likely spot to need
+// a live fix. Nicknames aren't extracted at all yet (left as []) since I
+// don't have confident knowledge of where MAL places them on this page.
+// ══════════════════════════════════════════════════════════════
+
+export interface MalCharacterAnime {
+  animeId: number | null;
+  title: string;
+  url: string | null;
+  image: string | null;
+  role: string | null;
+}
+
+export interface MalCharacterVA {
+  peopleId: number | null;
+  name: string;
+  url: string | null;
+  image: string | null;
+  language: string | null;
+}
+
+export interface MalCharacterDetails {
+  characterId: number;
+  name: string;
+  nameKanji: string | null;
+  nicknames: string[];
+  about: string | null;
+  favorites: number | null;
+  image: string | null;
+  animeography: MalCharacterAnime[];
+  voiceActors: MalCharacterVA[];
+}
+
+// Finds a section by its <h2>/<h3> header text (e.g. "Animeography") and
+// returns the table that follows it.
+function findSectionTable($: Doc, headerContains: string) {
+  let table: ReturnType<Doc> | null = null;
+  $('h2, h3').each((_, el) => {
+    if ($(el).text().trim().toLowerCase().includes(headerContains.toLowerCase())) {
+      const next = $(el).nextAll('table').first();
+      if (next.length) table = next;
+    }
+  });
+  return table;
+}
+
+// Shared row shape for both Animeography (/anime/ links) and Voice Actors
+// (/people/ links) tables -- MAL renders both as poster-thumbnail + name +
+// small-text-subtitle rows.
+function parseLinkedRows($: Doc, table: ReturnType<Doc>, hrefContains: string) {
+  const out: { id: number | null; name: string; url: string | null; image: string | null; sub: string | null }[] = [];
+  table.find('tr').each((_, tr) => {
+    const row = $(tr);
+    const link = row.find(`a[href*="${hrefContains}"]`).filter((__, a) => $(a).text().trim().length > 0).first();
+    if (!link.length) return;
+    const name = link.text().trim();
+    if (!name) return;
+    const url = link.attr('href') || null;
+    const image = row.find('img').first().attr('data-src') || row.find('img').first().attr('src') || null;
+    const sub = row.find('small').first().text().trim() || null;
+    out.push({ id: idFromUrl(url), name, url, image, sub });
+  });
+  return out;
+}
+
+async function scrapeCharacterDetails(characterId: number): Promise<MalCharacterDetails | null> {
+  const res = await http.get(`/character/${characterId}/_`);
+  const $ = cheerio.load(res.data);
+
+  const headerH2 = $('h2.normal_header').first();
+  if (!headerH2.length) return null;
+
+  const nameKanji = headerH2.find('small').first().text().trim().replace(/^\(|\)$/g, '') || null;
+  const name = headerH2.clone().children('small').remove().end().text().trim();
+  if (!name) return null;
+
+  const image =
+    $('img[itemprop="image"]').first().attr('data-src') ||
+    $('img[itemprop="image"]').first().attr('src') ||
+    null;
+
+  const bodyText = $('body').text();
+  const favMatch = bodyText.match(/Member Favorites:\s*([\d,]+)/i);
+  const favorites = favMatch ? parseInt(favMatch[1].replace(/,/g, ''), 10) : null;
+
+  let about: string | null = null;
+  const mainColText = headerH2.parent().text();
+  const afterFav = mainColText.split(/Member Favorites:[\s\d,]*/i)[1];
+  if (afterFav) {
+    const beforeAnimeo = afterFav.split(/Animeography/i)[0].trim();
+    about = beforeAnimeo || null;
+  }
+
+  const animeTable = findSectionTable($, 'Animeography');
+  const animeography: MalCharacterAnime[] = animeTable
+    ? parseLinkedRows($, animeTable, '/anime/').map((r) => ({
+        animeId: r.id,
+        title: r.name,
+        url: r.url,
+        image: r.image,
+        role: r.sub,
+      }))
+    : [];
+
+  const vaTable = findSectionTable($, 'Voice Actors');
+  const voiceActors: MalCharacterVA[] = vaTable
+    ? parseLinkedRows($, vaTable, '/people/').map((r) => ({
+        peopleId: r.id,
+        name: r.name,
+        url: r.url,
+        image: r.image,
+        language: r.sub,
+      }))
+    : [];
+
+  return {
+    characterId,
+    name,
+    nameKanji,
+    nicknames: [],
+    about,
+    favorites,
+    image,
+    animeography,
+    voiceActors,
+  };
+}
+
+export async function getCharacterDetails(characterId: number): Promise<MalCharacterDetails | null> {
+  const cacheKey = `mal:character:${characterId}`;
+  const cached = cacheGet<MalCharacterDetails>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeCharacterDetails(characterId));
+  if (result) cacheSet(cacheKey, result, 'mapping');
+  return result;
+}
