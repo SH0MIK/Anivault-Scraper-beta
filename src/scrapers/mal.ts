@@ -294,3 +294,106 @@ export async function getAllEpisodes(malId: number): Promise<MalEpisode[]> {
   }
   return all;
 }
+
+// ══════════════════════════════════════════════════════════════
+// Characters + voice actors — /anime/{id}/_/characters
+//
+// Each character is a two-column table: left column is the character
+// (photo, name, role), right column lists voice actors per language
+// (photo, name, /people/{id} link). One request, no pagination — MAL
+// shows the full cast on a single page regardless of length.
+// ══════════════════════════════════════════════════════════════
+
+export interface MalVoiceActor {
+  peopleId: number | null;
+  name: string;
+  url: string | null;
+  image: string | null;
+  language: string | null;
+}
+
+export interface MalCharacter {
+  characterId: number | null;
+  name: string;
+  url: string | null;
+  image: string | null;
+  role: string | null; // "Main" | "Supporting"
+  voiceActors: MalVoiceActor[];
+}
+
+function idFromUrl(url: string | undefined | null): number | null {
+  if (!url) return null;
+  const m = url.match(/\/(\d+)\//);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+function parseCharacterTables($: Doc): MalCharacter[] {
+  const characters: MalCharacter[] = [];
+
+  $('table').each((_, table) => {
+    const t = $(table);
+    const charLink = t.find('a[href*="/character/"]').first();
+    if (!charLink.length) return; // not a character block
+
+    const charUrl = charLink.attr('href') || null;
+    const charImg =
+      t.find('img[src*="/characters/"], img[data-src*="/characters/"]').first().attr('data-src') ||
+      t.find('img[src*="/characters/"], img[data-src*="/characters/"]').first().attr('src') ||
+      null;
+
+    // Name sits in a text link next to (or as) the character anchor.
+    const nameLink = t.find('a[href*="/character/"]').filter((__, el) => $(el).text().trim().length > 0).first();
+    const name = nameLink.text().trim();
+    if (!name) return;
+
+    const role = t.find('small').first().text().trim() || null;
+
+    const voiceActors: MalVoiceActor[] = [];
+    t.find('a[href*="/people/"]').each((__, a) => {
+      const vaName = $(a).text().trim();
+      if (!vaName) return;
+      const vaUrl = $(a).attr('href') || null;
+      // Language usually sits in a <small> right next to the VA link.
+      const language = $(a).parent().find('small').first().text().trim() || null;
+      const vaImg =
+        $(a).parent().find('img').first().attr('data-src') ||
+        $(a).parent().find('img').first().attr('src') ||
+        null;
+
+      voiceActors.push({
+        peopleId: idFromUrl(vaUrl),
+        name: vaName,
+        url: vaUrl,
+        image: vaImg,
+        language,
+      });
+    });
+
+    characters.push({
+      characterId: idFromUrl(charUrl),
+      name,
+      url: charUrl,
+      image: charImg,
+      role,
+      voiceActors,
+    });
+  });
+
+  return characters;
+}
+
+async function scrapeCharacters(malId: number): Promise<MalCharacter[]> {
+  const res = await http.get(`/anime/${malId}/_/characters`);
+  const $ = cheerio.load(res.data);
+  return parseCharacterTables($);
+}
+
+export async function getCharacters(malId: number): Promise<MalCharacter[]> {
+  const cacheKey = `mal:characters:${malId}`;
+  const cached = cacheGet<MalCharacter[]>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeCharacters(malId));
+  cacheSet(cacheKey, result, 'mapping'); // cast barely changes, reuse 24h bucket
+  return result;
+}
