@@ -540,12 +540,20 @@ async function scrapeCharacterDetails(characterId: number): Promise<MalCharacter
   // element that's only CSS-hidden (display:none) behind a "Click to Show
   // Spoiler" toggle -- the text itself is still in the DOM and still shows
   // up in .text(), just with no indication it was meant to be hidden.
-  // Pull it out into its own field instead of leaving it inline.
+  // Pull it out into its own field instead of leaving it inline. The
+  // toggle's own label ("Spoiler"/"Show"/"Hide") apparently sits in a
+  // separate element sharing the same class prefix, and the real content
+  // sometimes gets matched twice (same duplication pattern as the
+  // episode/animeography tables) -- filter label-only matches and dedupe.
+  const spoilerSeen = new Set<string>();
   const spoilers: string[] = [];
   container.find('[class*="spoiler"]').each((_, el) => {
     const txt = $(el).text().trim();
-    if (txt) spoilers.push(txt);
     $(el).remove();
+    if (!txt || txt.length < 15) return; // drops "Spoiler"/"Show"/"Hide"-style toggle labels
+    if (spoilerSeen.has(txt)) return;
+    spoilerSeen.add(txt);
+    spoilers.push(txt);
   });
 
   let about = container.text();
