@@ -736,8 +736,8 @@ function stripTags(html: string): string {
 
 // Slices out the substring starting at startLabel up to whichever of
 // endLabels appears first after it (or end of string if none do).
-function extractBlock(html: string, startLabel: string, endLabels: string[]): string {
-  const startIdx = html.indexOf(startLabel);
+function extractBlock(html: string, startLabel: string, endLabels: string[], fromIndex = 0): string {
+  const startIdx = html.indexOf(startLabel, fromIndex);
   if (startIdx === -1) return '';
   let endIdx = html.length;
   for (const label of endLabels) {
@@ -852,6 +852,30 @@ export interface MalVideo {
   songArtist: string | null; // music videos only
 }
 
+// Each music video's title/artist sits as plain quoted text right after
+// its link ("Title" by Artist), not inside an anchor. Split into one
+// chunk per quote+by occurrence first (same technique as theme parsing)
+// rather than a single regex with a lookahead to guess where one entry's
+// artist name ends and the next begins -- that approach broke the same
+// way the theme parser's did, letting the next entry's label/"play" text
+// bleed into the current artist field.
+function parseMusicVideoSongs(text: string): { title: string; artist: string }[] {
+  const songs: { title: string; artist: string }[] = [];
+  const chunks = text.split(/(?="[^"]+"\s*by\s)/);
+  for (const chunk of chunks) {
+    const m = chunk.match(/^"([^"]+)"\s*by\s*([\s\S]*)$/);
+    if (!m) continue;
+    let artist = m[2];
+    // Cut off at the next entry's video label (e.g. "ED 2 (Artist ver.)
+    // play") or any leftover "play" boilerplate bleeding in from it.
+    artist = artist.replace(/\b(?:ED|OP|PV)\s*\d+[\s\S]*$/i, '').trim();
+    artist = artist.replace(/\bplay\b[\s\S]*$/i, '').trim();
+    artist = artist.replace(/[,\s]+$/, '').trim();
+    songs.push({ title: m[1].trim(), artist });
+  }
+  return songs;
+}
+
 function extractVideoLinks($: Doc): { label: string; youtubeId: string | null; embedUrl: string }[] {
   const out: { label: string; youtubeId: string | null; embedUrl: string }[] = [];
   $('a[href*="/embed/"]').each((_, a) => {
@@ -868,26 +892,27 @@ async function scrapeAnimeVideos(malId: number): Promise<{ musicVideos: MalVideo
   const res = await http.get(`/anime/${malId}/_/video`);
   const html: string = res.data;
 
-  const mvBlock = extractBlock(html, 'Music Videos', ['Add Promotional Video', 'Trailers']);
-  const trailerBlock = extractBlock(html, 'Trailers', ['Top Anime']);
+  const mvStartIdx = html.indexOf('Music Videos');
+  const mvBlock = mvStartIdx === -1 ? '' : extractBlock(html, 'Music Videos', ['Add Promotional Video', 'Trailers']);
+
+  // MAL's own global nav (present on every page) has a "Watch > Anime
+  // Trailers" link near the very top -- a from-the-start search for
+  // "Trailers" matches that first (it's a substring of "Anime Trailers"),
+  // badly over-capturing everything from near the page top through the
+  // real Trailers section, including all of Music Videos along the way.
+  // Only search for it after the Music Videos block ends, since the nav
+  // always sits above both real sections.
+  const trailerSearchFrom = mvStartIdx === -1 ? 0 : mvStartIdx + mvBlock.length;
+  const trailerStartIdx = html.indexOf('Trailers', trailerSearchFrom);
+  const trailerBlock = trailerStartIdx === -1 ? '' : extractBlock(html, 'Trailers', ['Top Anime'], trailerStartIdx);
 
   const mv$ = cheerio.load(mvBlock);
   const mvLinks = extractVideoLinks(mv$);
-  // Each music video's title/artist sits as plain quoted text right after
-  // its link ("Title" by Artist), not inside an anchor -- pull all such
-  // quotes from the block in order and zip them with the links by index
-  // rather than trying to bind each to its exact sibling text node.
-  const songRe = /"([^"]+)"\s*by\s*([^"]+?)(?=\s*(?:\[|"|$))/g;
-  const songs: { title: string; artist: string }[] = [];
-  let sm;
-  const mvText = stripTags(mvBlock);
-  while ((sm = songRe.exec(mvText))) {
-    songs.push({ title: sm[1].trim(), artist: sm[2].trim() });
-  }
+  const mvSongs = parseMusicVideoSongs(stripTags(mvBlock));
   const musicVideos: MalVideo[] = mvLinks.map((v, i) => ({
     ...v,
-    songTitle: songs[i]?.title ?? null,
-    songArtist: songs[i]?.artist ?? null,
+    songTitle: mvSongs[i]?.title ?? null,
+    songArtist: mvSongs[i]?.artist ?? null,
   }));
 
   const tr$ = cheerio.load(trailerBlock);
