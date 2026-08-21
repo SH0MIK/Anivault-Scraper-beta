@@ -755,11 +755,20 @@ export interface MalTheme {
 
 function parseThemeBlock(text: string): MalTheme[] {
   const themes: MalTheme[] = [];
-  const re = /(\d+):\s*"([^"]+)"\s*by\s*(.+?)(?:\s*\(eps?\.?\s*([^)]+)\))?\s*(?=\d+:\s*"|$)/g;
+  // The leading "N: " looked like literal text when this page was
+  // inspected, but that inspection went through a tool that renders pages
+  // as clean markdown -- which can synthesize a "1: " prefix as a table/
+  // list-formatting convenience rather than it being real text in the raw
+  // HTML this scraper actually sees. Don't require it; fall back to a
+  // sequential index when it's absent so a formatting difference doesn't
+  // zero out the whole result.
+  const re = /(?:(\d+)\s*:\s*)?"([^"]+)"\s*by\s*(.+?)(?:\s*\(eps?\.?\s*([^)]+)\))?(?=\s*(?:\d+\s*:\s*)?"|$)/g;
   let m;
+  let i = 0;
   while ((m = re.exec(text))) {
+    i++;
     themes.push({
-      number: parseInt(m[1], 10),
+      number: m[1] ? parseInt(m[1], 10) : i,
       title: m[2].trim(),
       artist: m[3].trim(),
       episodes: m[4] ? m[4].trim() : null,
