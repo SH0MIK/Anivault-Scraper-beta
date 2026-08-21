@@ -701,3 +701,154 @@ export async function getCharacterPictures(characterId: number): Promise<MalPict
   cacheSet(cacheKey, result, 'mapping');
   return result;
 }
+
+// ══════════════════════════════════════════════════════════════
+// Theme songs (Opening/Ending credits) and videos (music videos + PVs)
+//
+// MAL splits this across two different pages, so this mirrors that split
+// rather than merging it into one call:
+//   - Theme song CREDITS (title, artist, which episodes it covers) live on
+//     the main /anime/{id} page as plain visible text: `1: "Title" by
+//     Artist (eps 1-13)`. Every theme song is listed here even if MAL has
+//     no embeddable video for it.
+//   - Embeddable VIDEOS (YouTube IDs) for music videos and promotional
+//     videos (PVs/trailers) live on the separate /anime/{id}/_/video page.
+//     Not every theme song has one.
+//
+// Both extractions use text-slicing between landmark strings rather than
+// selectors, same approach as the character bio extraction -- MAL doesn't
+// wrap these sections in anything with a stable class name I could find,
+// and the visible text itself is a reliable, consistently-formatted
+// anchor ("Opening Theme" / "Ending Theme" / "Music Videos" / "Trailers"
+// always appear verbatim as section labels).
+// ══════════════════════════════════════════════════════════════
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Slices out the substring starting at startLabel up to whichever of
+// endLabels appears first after it (or end of string if none do).
+function extractBlock(html: string, startLabel: string, endLabels: string[]): string {
+  const startIdx = html.indexOf(startLabel);
+  if (startIdx === -1) return '';
+  let endIdx = html.length;
+  for (const label of endLabels) {
+    const idx = html.indexOf(label, startIdx + startLabel.length);
+    if (idx !== -1 && idx < endIdx) endIdx = idx;
+  }
+  return html.slice(startIdx, endIdx);
+}
+
+export interface MalTheme {
+  number: number;
+  title: string;
+  artist: string;
+  episodes: string | null;
+}
+
+function parseThemeBlock(text: string): MalTheme[] {
+  const themes: MalTheme[] = [];
+  const re = /(\d+):\s*"([^"]+)"\s*by\s*(.+?)(?:\s*\(eps?\.?\s*([^)]+)\))?\s*(?=\d+:\s*"|$)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    themes.push({
+      number: parseInt(m[1], 10),
+      title: m[2].trim(),
+      artist: m[3].trim(),
+      episodes: m[4] ? m[4].trim() : null,
+    });
+  }
+  return themes;
+}
+
+async function scrapeAnimeThemes(malId: number): Promise<{ opening: MalTheme[]; ending: MalTheme[] }> {
+  const res = await http.get(`/anime/${malId}`);
+  const html: string = res.data;
+
+  const openingBlock = extractBlock(html, 'Opening Theme', ['Ending Theme', 'More Videos', 'Episode Videos']);
+  const endingBlock = extractBlock(html, 'Ending Theme', ['More Videos', 'Episode Videos']);
+
+  return {
+    opening: parseThemeBlock(stripTags(openingBlock)),
+    ending: parseThemeBlock(stripTags(endingBlock)),
+  };
+}
+
+export async function getAnimeThemes(malId: number): Promise<{ opening: MalTheme[]; ending: MalTheme[] }> {
+  const cacheKey = `mal:themes:${malId}`;
+  const cached = cacheGet<{ opening: MalTheme[]; ending: MalTheme[] }>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeAnimeThemes(malId));
+  cacheSet(cacheKey, result, 'mapping'); // theme list never changes post-airing, reuse 24h bucket
+  return result;
+}
+
+export interface MalVideo {
+  label: string; // e.g. "PV 2", "ED 1 (Artist ver.)"
+  youtubeId: string | null;
+  embedUrl: string;
+  songTitle: string | null; // music videos only
+  songArtist: string | null; // music videos only
+}
+
+function extractVideoLinks($: Doc): { label: string; youtubeId: string | null; embedUrl: string }[] {
+  const out: { label: string; youtubeId: string | null; embedUrl: string }[] = [];
+  $('a[href*="/embed/"]').each((_, a) => {
+    const href = $(a).attr('href');
+    if (!href) return;
+    const label = $(a).text().replace(/\bplay\b\s*$/i, '').trim();
+    const idMatch = href.match(/\/embed\/([a-zA-Z0-9_-]+)/);
+    out.push({ label, youtubeId: idMatch ? idMatch[1] : null, embedUrl: href });
+  });
+  return out;
+}
+
+async function scrapeAnimeVideos(malId: number): Promise<{ musicVideos: MalVideo[]; trailers: MalVideo[] }> {
+  const res = await http.get(`/anime/${malId}/_/video`);
+  const html: string = res.data;
+
+  const mvBlock = extractBlock(html, 'Music Videos', ['Add Promotional Video', 'Trailers']);
+  const trailerBlock = extractBlock(html, 'Trailers', ['Top Anime']);
+
+  const mv$ = cheerio.load(mvBlock);
+  const mvLinks = extractVideoLinks(mv$);
+  // Each music video's title/artist sits as plain quoted text right after
+  // its link ("Title" by Artist), not inside an anchor -- pull all such
+  // quotes from the block in order and zip them with the links by index
+  // rather than trying to bind each to its exact sibling text node.
+  const songRe = /"([^"]+)"\s*by\s*([^"]+?)(?=\s*(?:\[|"|$))/g;
+  const songs: { title: string; artist: string }[] = [];
+  let sm;
+  const mvText = stripTags(mvBlock);
+  while ((sm = songRe.exec(mvText))) {
+    songs.push({ title: sm[1].trim(), artist: sm[2].trim() });
+  }
+  const musicVideos: MalVideo[] = mvLinks.map((v, i) => ({
+    ...v,
+    songTitle: songs[i]?.title ?? null,
+    songArtist: songs[i]?.artist ?? null,
+  }));
+
+  const tr$ = cheerio.load(trailerBlock);
+  const trailers: MalVideo[] = extractVideoLinks(tr$).map((v) => ({ ...v, songTitle: null, songArtist: null }));
+
+  return { musicVideos, trailers };
+}
+
+export async function getAnimeVideos(malId: number): Promise<{ musicVideos: MalVideo[]; trailers: MalVideo[] }> {
+  const cacheKey = `mal:videos:${malId}`;
+  const cached = cacheGet<{ musicVideos: MalVideo[]; trailers: MalVideo[] }>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeAnimeVideos(malId));
+  cacheSet(cacheKey, result, 'mapping');
+  return result;
+}
