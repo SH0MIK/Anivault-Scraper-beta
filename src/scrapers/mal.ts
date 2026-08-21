@@ -478,6 +478,8 @@ export interface MalCharacterDetails {
   nameKanji: string | null;
   nicknames: string[];
   about: string | null;
+  note: string | null;
+  spoilers: string[];
   favorites: number | null;
   image: string | null;
   animeography: MalCharacterAnime[];
@@ -533,6 +535,19 @@ async function scrapeCharacterDetails(characterId: number): Promise<MalCharacter
   container.find('br').each((_, br) => {
     $(br).replaceWith('\n');
   });
+
+  // MAL wraps spoiler bio text (character deaths, twists, etc.) in an
+  // element that's only CSS-hidden (display:none) behind a "Click to Show
+  // Spoiler" toggle -- the text itself is still in the DOM and still shows
+  // up in .text(), just with no indication it was meant to be hidden.
+  // Pull it out into its own field instead of leaving it inline.
+  const spoilers: string[] = [];
+  container.find('[class*="spoiler"]').each((_, el) => {
+    const txt = $(el).text().trim();
+    if (txt) spoilers.push(txt);
+    $(el).remove();
+  });
+
   let about = container.text();
   // MAL's page chrome ("Details / Clubs / Pictures" + the "Top > Characters
   // > {name}" breadcrumb) sits before the real content in this same
@@ -548,6 +563,16 @@ async function scrapeCharacterDetails(characterId: number): Promise<MalCharacter
   // Cut off before Voice Actors if that table's text leaked into this container.
   const voiceIdx = about.search(/Voice Actors/i);
   if (voiceIdx !== -1) about = about.slice(0, voiceIdx).trim();
+  // MAL always appends a translation-credit footer ("Note: {Name} is the
+  // official English translation by ...") at the end of the bio -- split
+  // it into its own field rather than leaving it glued to the last
+  // paragraph.
+  let note: string | null = null;
+  const noteMatch = about.match(/\n*Note:\s*([\s\S]*)$/i);
+  if (noteMatch) {
+    note = noteMatch[1].trim() || null;
+    about = about.slice(0, noteMatch.index).trim();
+  }
   if (!about) about = null;
 
   const animeography: MalCharacterAnime[] = [];
@@ -581,6 +606,8 @@ async function scrapeCharacterDetails(characterId: number): Promise<MalCharacter
     nameKanji,
     nicknames: [],
     about,
+    note,
+    spoilers,
     favorites,
     image,
     animeography,
