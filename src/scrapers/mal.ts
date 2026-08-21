@@ -505,9 +505,16 @@ async function scrapeCharacterDetails(characterId: number): Promise<MalCharacter
     $(br).replaceWith('\n');
   });
   let about = container.text();
+  // MAL's page chrome ("Details / Clubs / Pictures" + the "Top > Characters
+  // > {name}" breadcrumb) sits before the real content in this same
+  // container. It always ends with the breadcrumb's own mention of
+  // "Characters", so jump past that plus the blank-line run that follows
+  // it rather than assuming real content starts at position 0.
+  about = about.replace(/^[\s\S]*?\bCharacters\b[\s\S]*?\n\s*\n+/, '').trim();
   about = about.replace(name, '').trim();
   if (nameKanji) about = about.replace(`(${nameKanji})`, '').replace(nameKanji, '').trim();
-  // Strip leading "Label: value" quick-fact lines from the front.
+  // Strip leading "Label: value" quick-fact lines (Age:, Height:, etc. --
+  // present for some characters, absent for others).
   about = about.replace(/^(?:\s*[A-Z][A-Za-z][A-Za-z ]{1,30}:\s*[^\n]*\n?)+/, '').trim();
   // Cut off before Voice Actors if that table's text leaked into this container.
   const voiceIdx = about.search(/Voice Actors/i);
@@ -516,16 +523,25 @@ async function scrapeCharacterDetails(characterId: number): Promise<MalCharacter
 
   const animeography: MalCharacterAnime[] = [];
   const voiceActors: MalCharacterVA[] = [];
+  const seenAnime = new Set<number | string>();
+  const seenVA = new Set<number | string>();
 
   $('table').each((_, t) => {
     const table = $(t);
     const anime = parseLinkedTable($, table, '/anime/');
     if (anime) {
+      const key = anime.id ?? anime.url ?? anime.name;
+      if (seenAnime.has(key)) return; // MAL nests a table inside this table's cell, so $('table') matches both
+      seenAnime.add(key);
+
       animeography.push({ animeId: anime.id, title: anime.name, url: anime.url, image: anime.image, role: anime.sub });
       return;
     }
     const va = parseLinkedTable($, table, '/people/');
     if (va) {
+      const vaKey = va.id ?? va.url ?? va.name;
+      if (seenVA.has(vaKey)) return;
+      seenVA.add(vaKey);
       voiceActors.push({ peopleId: va.id, name: va.name, url: va.url, image: va.image, language: va.sub });
     }
   });
