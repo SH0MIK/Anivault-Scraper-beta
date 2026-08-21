@@ -455,36 +455,25 @@ export interface MalCharacterDetails {
   voiceActors: MalCharacterVA[];
 }
 
-// Finds a section by its <h2>/<h3> header text (e.g. "Animeography") and
-// returns the table that follows it.
-function findSectionTable($: Doc, headerContains: string) {
-  let table: ReturnType<Doc> | null = null;
-  $('h2, h3').each((_, el) => {
-    if ($(el).text().trim().toLowerCase().includes(headerContains.toLowerCase())) {
-      const next = $(el).nextAll('table').first();
-      if (next.length) table = next;
-    }
-  });
-  return table;
-}
-
-// Shared row shape for both Animeography (/anime/ links) and Voice Actors
-// (/people/ links) tables -- MAL renders both as poster-thumbnail + name +
-// small-text-subtitle rows.
-function parseLinkedRows($: Doc, table: ReturnType<Doc>, hrefContains: string) {
-  const out: { id: number | null; name: string; url: string | null; image: string | null; sub: string | null }[] = [];
-  table.find('tr').each((_, tr) => {
-    const row = $(tr);
-    const link = row.find(`a[href*="${hrefContains}"]`).filter((__, a) => $(a).text().trim().length > 0).first();
-    if (!link.length) return;
-    const name = link.text().trim();
-    if (!name) return;
-    const url = link.attr('href') || null;
-    const image = row.find('img').first().attr('data-src') || row.find('img').first().attr('src') || null;
-    const sub = row.find('small').first().text().trim() || null;
-    out.push({ id: idFromUrl(url), name, url, image, sub });
-  });
-  return out;
+// Animeography and Voice Actors are each rendered as ONE SEPARATE <table>
+// per entry (not one table with many rows) -- same convention MAL uses on
+// the anime-page character list. Classify every table on the page by
+// which kind of link it contains rather than hunting for a section header,
+// since the header tag/class for these sections isn't confirmed.
+function parseLinkedTable($: Doc, table: ReturnType<Doc>, hrefContains: string) {
+  const link = table.find(`a[href*="${hrefContains}"]`).filter((__, a) => $(a).text().trim().length > 0).first();
+  if (!link.length) return null;
+  const name = link.text().trim();
+  if (!name) return null;
+  const url = link.attr('href') || null;
+  const image = table.find('img').first().attr('data-src') || table.find('img').first().attr('src') || null;
+  // The "role"/"language" label sits as trailing plain text in the same
+  // cell as the name link (alongside an "add to list" link on the
+  // animeography side) -- strip the name and that boilerplate out rather
+  // than rely on a dedicated tag.
+  const cellText = link.closest('td').text();
+  const sub = cellText.replace(name, '').replace(/\badd\b/gi, '').trim() || null;
+  return { id: idFromUrl(url), name, url, image, sub };
 }
 
 async function scrapeCharacterDetails(characterId: number): Promise<MalCharacterDetails | null> {
@@ -498,44 +487,48 @@ async function scrapeCharacterDetails(characterId: number): Promise<MalCharacter
   const name = headerH2.clone().children('small').remove().end().text().trim();
   if (!name) return null;
 
-  const image =
-    $('img[itemprop="image"]').first().attr('data-src') ||
-    $('img[itemprop="image"]').first().attr('src') ||
-    null;
+  // Character portraits aren't marked with itemprop="image" the way anime
+  // posters are -- og:image is a reliable standard tag instead.
+  const image = $('meta[property="og:image"]').attr('content') || null;
 
   const bodyText = $('body').text();
   const favMatch = bodyText.match(/Member Favorites:\s*([\d,]+)/i);
   const favorites = favMatch ? parseInt(favMatch[1].replace(/,/g, ''), 10) : null;
 
-  let about: string | null = null;
-  const mainColText = headerH2.parent().text();
-  const afterFav = mainColText.split(/Member Favorites:[\s\d,]*/i)[1];
-  if (afterFav) {
-    const beforeAnimeo = afterFav.split(/Animeography/i)[0].trim();
-    about = beforeAnimeo || null;
-  }
+  // Bio text sits in the main column, after the h2 name and a block of
+  // quick-fact lines (Age:, Height:, Birthdate:, etc. -- present for some
+  // characters, absent for others), and before the "Voice Actors" section.
+  // "Member Favorites"/"Animeography" live in the sidebar, not near the
+  // bio, so they're not useful anchors here.
+  const container = headerH2.parent();
+  container.find('br').each((_, br) => {
+    $(br).replaceWith('\n');
+  });
+  let about = container.text();
+  about = about.replace(name, '').trim();
+  if (nameKanji) about = about.replace(`(${nameKanji})`, '').replace(nameKanji, '').trim();
+  // Strip leading "Label: value" quick-fact lines from the front.
+  about = about.replace(/^(?:\s*[A-Z][A-Za-z][A-Za-z ]{1,30}:\s*[^\n]*\n?)+/, '').trim();
+  // Cut off before Voice Actors if that table's text leaked into this container.
+  const voiceIdx = about.search(/Voice Actors/i);
+  if (voiceIdx !== -1) about = about.slice(0, voiceIdx).trim();
+  if (!about) about = null;
 
-  const animeTable = findSectionTable($, 'Animeography');
-  const animeography: MalCharacterAnime[] = animeTable
-    ? parseLinkedRows($, animeTable, '/anime/').map((r) => ({
-        animeId: r.id,
-        title: r.name,
-        url: r.url,
-        image: r.image,
-        role: r.sub,
-      }))
-    : [];
+  const animeography: MalCharacterAnime[] = [];
+  const voiceActors: MalCharacterVA[] = [];
 
-  const vaTable = findSectionTable($, 'Voice Actors');
-  const voiceActors: MalCharacterVA[] = vaTable
-    ? parseLinkedRows($, vaTable, '/people/').map((r) => ({
-        peopleId: r.id,
-        name: r.name,
-        url: r.url,
-        image: r.image,
-        language: r.sub,
-      }))
-    : [];
+  $('table').each((_, t) => {
+    const table = $(t);
+    const anime = parseLinkedTable($, table, '/anime/');
+    if (anime) {
+      animeography.push({ animeId: anime.id, title: anime.name, url: anime.url, image: anime.image, role: anime.sub });
+      return;
+    }
+    const va = parseLinkedTable($, table, '/people/');
+    if (va) {
+      voiceActors.push({ peopleId: va.id, name: va.name, url: va.url, image: va.image, language: va.sub });
+    }
+  });
 
   return {
     characterId,
