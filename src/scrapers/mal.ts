@@ -726,6 +726,7 @@ export async function getCharacterPictures(characterId: number): Promise<MalPict
 function stripTags(html: string): string {
   return html
     .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&amp;/g, '&')
