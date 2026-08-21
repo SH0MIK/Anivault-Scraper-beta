@@ -752,30 +752,61 @@ export interface MalTheme {
   title: string;
   artist: string;
   episodes: string | null;
+  spotifyUrl: string | null;
 }
 
 function parseThemeBlock(text: string): MalTheme[] {
   const themes: MalTheme[] = [];
-  // The leading "N: " looked like literal text when this page was
-  // inspected, but that inspection went through a tool that renders pages
-  // as clean markdown -- which can synthesize a "1: " prefix as a table/
-  // list-formatting convenience rather than it being real text in the raw
-  // HTML this scraper actually sees. Don't require it; fall back to a
-  // sequential index when it's absent so a formatting difference doesn't
-  // zero out the whole result.
-  const re = /(?:(\d+)\s*:\s*)?"([^"]+)"\s*by\s*(.+?)(?:\s*\(eps?\.?\s*([^)]+)\))?(?=\s*(?:\d+\s*:\s*)?"|$)/g;
-  let m;
+  // Split into one chunk per entry using the "N: " marker (confirmed real
+  // via a live screenshot) as the delimiter, then parse each chunk in
+  // isolation. This replaces an earlier single-regex-with-lookahead
+  // approach that had to guess where one entry ended and the next began --
+  // fragile whenever unexpected text (an "Edit" link, boilerplate) sits
+  // near that boundary. Splitting first removes the need to guess at all.
+  const chunks = text.split(/(?=\d+\s*:\s*")/);
   let i = 0;
-  while ((m = re.exec(text))) {
+  for (const chunk of chunks) {
+    const m = chunk.match(/^(\d+)\s*:\s*"([^"]+)"\s*by\s*([\s\S]*)$/);
+    if (!m) continue;
     i++;
-    themes.push({
-      number: m[1] ? parseInt(m[1], 10) : i,
-      title: m[2].trim(),
-      artist: m[3].trim(),
-      episodes: m[4] ? m[4].trim() : null,
-    });
+
+    const title = m[2].trim();
+    let rest = m[3];
+
+    let episodes: string | null = null;
+    const epMatch = rest.match(/\(eps?\.?\s*([^)]+)\)/i);
+    if (epMatch && epMatch.index !== undefined) {
+      episodes = epMatch[1].trim();
+      rest = rest.slice(0, epMatch.index); // only text before the eps parenthetical is the artist
+    }
+
+    // Strip trailing UI boilerplate ("Edit", "MV", "Preview") that
+    // sometimes sits right after the artist name with no separator when
+    // there's no eps parenthetical to anchor on instead.
+    let artist = rest.replace(/\b(Edit|MV|Preview)\b[\s\S]*$/i, '').trim();
+    artist = artist.replace(/[,\s]+$/, '').trim();
+
+    themes.push({ number: m[1] ? parseInt(m[1], 10) : i, title, artist, episodes, spotifyUrl: null });
   }
   return themes;
+}
+
+// The "Preview" popup's Spotify/Apple/Amazon/YouTube Music buttons are
+// populated by MAL's own JS when tapped -- only Spotify's ID is actually
+// embedded in the page already, as the 4th argument to the onclick
+// handler (a 22-char Spotify track ID). The other three platforms are
+// resolved by a separate call this scraper has no visibility into, so
+// only Spotify can be added this way.
+function extractSpotifyIds($: Doc): (string | null)[] {
+  const ids: (string | null)[] = [];
+  $('[onclick*="openMusicLinkPopup"], a[href*="openMusicLinkPopup"]').each((_, el) => {
+    const raw = $(el).attr('onclick') || $(el).attr('href') || '';
+    const m = raw.match(
+      /openMusicLinkPopup\(\s*'[^']*'\s*,\s*'(?:[^'\\]|\\.)*'\s*,\s*'(?:[^'\\]|\\.)*'\s*,\s*'([^']*)'\s*\)/
+    );
+    ids.push(m ? m[1] : null);
+  });
+  return ids;
 }
 
 async function scrapeAnimeThemes(malId: number): Promise<{ opening: MalTheme[]; ending: MalTheme[] }> {
@@ -785,10 +816,22 @@ async function scrapeAnimeThemes(malId: number): Promise<{ opening: MalTheme[]; 
   const openingBlock = extractBlock(html, 'Opening Theme', ['Ending Theme', 'More Videos', 'Episode Videos']);
   const endingBlock = extractBlock(html, 'Ending Theme', ['More Videos', 'Episode Videos']);
 
-  return {
-    opening: parseThemeBlock(stripTags(openingBlock)),
-    ending: parseThemeBlock(stripTags(endingBlock)),
-  };
+  const opening = parseThemeBlock(stripTags(openingBlock));
+  const ending = parseThemeBlock(stripTags(endingBlock));
+
+  // Spotify IDs are zipped in by position (same approach as music-video
+  // song titles) since there's no direct DOM link between the flattened
+  // text used above and these onclick attributes.
+  const openingIds = extractSpotifyIds(cheerio.load(openingBlock));
+  const endingIds = extractSpotifyIds(cheerio.load(endingBlock));
+  opening.forEach((t, idx) => {
+    t.spotifyUrl = openingIds[idx] ? `https://open.spotify.com/track/${openingIds[idx]}` : null;
+  });
+  ending.forEach((t, idx) => {
+    t.spotifyUrl = endingIds[idx] ? `https://open.spotify.com/track/${endingIds[idx]}` : null;
+  });
+
+  return { opening, ending };
 }
 
 export async function getAnimeThemes(malId: number): Promise<{ opening: MalTheme[]; ending: MalTheme[] }> {
