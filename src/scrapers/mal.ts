@@ -127,10 +127,11 @@ async function scrapeAnimeDetails(malId: number): Promise<MalAnimeDetails | null
   const synopsisRaw = $('p[itemprop="description"]').first().text().trim();
   const synopsis = synopsisRaw ? synopsisRaw.replace(/\[Written by MAL Rewrite\]/i, '').trim() || null : null;
 
-  const image =
+  const image = fullSizeImage(
     $('img[itemprop="image"]').first().attr('data-src') ||
-    $('img[itemprop="image"]').first().attr('src') ||
-    null;
+      $('img[itemprop="image"]').first().attr('src') ||
+      null
+  );
 
   const scoreText = $('span[itemprop="ratingValue"]').first().text().trim();
   const score = scoreText && !isNaN(parseFloat(scoreText)) ? parseFloat(scoreText) : null;
@@ -339,38 +340,57 @@ function idFromUrl(url: string | undefined | null): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+// MAL serves list/grid thumbnails through a resizing path segment like
+// /r/42x62/images/... -- stripping it returns the original full-size
+// image instead of the small, blurry-when-scaled-up thumbnail.
+function fullSizeImage(url: string | null | undefined): string | null {
+  if (!url) return null;
+  return url.replace(/\/r\/\d+x\d+\//, '/');
+}
+
 function parseCharacterTables($: Doc): MalCharacter[] {
-  const characters: MalCharacter[] = [];
+  // Merge by character ID rather than pushing one entry per table match.
+  // MAL nests each character's voice-actor sub-list inside the same outer
+  // <table> as the character's own info, and $('table') ends up matching
+  // more than one level of that nesting for the same character -- so a
+  // naive push produces duplicates, and searching the wrong (too-broad)
+  // table for "role" can grab unrelated text. Merging keeps whichever
+  // match has the best data for each field and unions voice actors,
+  // instead of gambling on which table match "wins".
+  const byId = new Map<number, MalCharacter>();
 
   $('table').each((_, table) => {
     const t = $(table);
-    const charLink = t.find('a[href*="/character/"]').first();
+    const charLink = t.find('a[href*="/character/"]').filter((__, el) => $(el).text().trim().length > 0).first();
     if (!charLink.length) return; // not a character block
 
     const charUrl = charLink.attr('href') || null;
-    const charImg =
+    const id = idFromUrl(charUrl);
+    const name = charLink.text().trim();
+    if (id === null || !name) return;
+
+    const charImg = fullSizeImage(
       t.find('img[src*="/characters/"], img[data-src*="/characters/"]').first().attr('data-src') ||
-      t.find('img[src*="/characters/"], img[data-src*="/characters/"]').first().attr('src') ||
-      null;
+        t.find('img[src*="/characters/"], img[data-src*="/characters/"]').first().attr('src') ||
+        null
+    );
 
-    // Name sits in a text link next to (or as) the character anchor.
-    const nameLink = t.find('a[href*="/character/"]').filter((__, el) => $(el).text().trim().length > 0).first();
-    const name = nameLink.text().trim();
-    if (!name) return;
-
-    const role = t.find('small').first().text().trim() || null;
+    // "Main"/"Supporting" sits as trailing text in the name link's own
+    // cell (alongside a favorites count on this listing) -- scope to that
+    // cell specifically rather than searching the whole matched table,
+    // which can be a large wrapper spanning unrelated text.
+    const nameCell = charLink.closest('td');
+    let role = nameCell.text().replace(name, '').replace(/[\d,]+\s*Favorites/i, '').trim() || null;
+    if (role && role.length > 20) role = null; // sanity guard against an oversized/wrong match
 
     const voiceActors: MalVoiceActor[] = [];
     t.find('a[href*="/people/"]').each((__, a) => {
       const vaName = $(a).text().trim();
       if (!vaName) return;
       const vaUrl = $(a).attr('href') || null;
-      // Language usually sits in a <small> right next to the VA link.
-      const language = $(a).parent().find('small').first().text().trim() || null;
-      const vaImg =
-        $(a).parent().find('img').first().attr('data-src') ||
-        $(a).parent().find('img').first().attr('src') ||
-        null;
+      const vaCell = $(a).closest('td');
+      const language = vaCell.text().replace(vaName, '').trim() || null;
+      const vaImg = fullSizeImage(vaCell.find('img').first().attr('data-src') || vaCell.find('img').first().attr('src') || null);
 
       voiceActors.push({
         peopleId: idFromUrl(vaUrl),
@@ -381,17 +401,26 @@ function parseCharacterTables($: Doc): MalCharacter[] {
       });
     });
 
-    characters.push({
-      characterId: idFromUrl(charUrl),
-      name,
-      url: charUrl,
-      image: charImg,
-      role,
-      voiceActors,
-    });
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, { characterId: id, name, url: charUrl, image: charImg, role, voiceActors });
+      return;
+    }
+    // Merge into the existing entry: fill in whichever fields this match
+    // has that the earlier one didn't, and union voice actors by ID.
+    if (!existing.role && role) existing.role = role;
+    if (!existing.image && charImg) existing.image = charImg;
+    const seenVa = new Set(existing.voiceActors.map((v) => v.peopleId ?? v.name));
+    for (const va of voiceActors) {
+      const key = va.peopleId ?? va.name;
+      if (!seenVa.has(key)) {
+        existing.voiceActors.push(va);
+        seenVa.add(key);
+      }
+    }
   });
 
-  return characters;
+  return Array.from(byId.values());
 }
 
 async function scrapeCharacters(malId: number): Promise<MalCharacter[]> {
@@ -466,7 +495,7 @@ function parseLinkedTable($: Doc, table: ReturnType<Doc>, hrefContains: string) 
   const name = link.text().trim();
   if (!name) return null;
   const url = link.attr('href') || null;
-  const image = table.find('img').first().attr('data-src') || table.find('img').first().attr('src') || null;
+  const image = fullSizeImage(table.find('img').first().attr('data-src') || table.find('img').first().attr('src') || null);
   // The "role"/"language" label sits as trailing plain text in the same
   // cell as the name link (alongside an "add to list" link on the
   // animeography side) -- strip the name and that boilerplate out rather
