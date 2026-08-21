@@ -632,3 +632,72 @@ export async function getCharacterDetails(characterId: number): Promise<MalChara
   if (result) cacheSet(cacheKey, result, 'mapping');
   return result;
 }
+
+// ══════════════════════════════════════════════════════════════
+// Picture galleries — /anime/{id}/_/pics and /character/{id}/_/pics
+//
+// Same page structure for both, just a different URL prefix -- one shared
+// parser. Each picture is a link (usually inside its own small table,
+// matching MAL's convention everywhere else on the site) whose href points
+// straight at the full-size CDN image; the <img> inside it is a smaller
+// preview, kept as `thumbnail` after stripping MAL's resize-path segment
+// (same fullSizeImage helper used elsewhere, applied here mainly in case
+// the thumb src itself is occasionally the largest copy available).
+// ══════════════════════════════════════════════════════════════
+
+export interface MalPicture {
+  image: string;
+  thumbnail: string | null;
+}
+
+function parsePictures($: Doc): MalPicture[] {
+  const seen = new Set<string>();
+  const pics: MalPicture[] = [];
+
+  $('a[href*="cdn.myanimelist.net"]').each((_, a) => {
+    const href = $(a).attr('href');
+    if (!href || !/\.(jpe?g|png|webp)(\?|$)/i.test(href)) return; // skip non-image links MAL sometimes wraps in the same block
+    if (seen.has(href)) return;
+    seen.add(href);
+
+    const thumbnail = fullSizeImage(
+      $(a).find('img').first().attr('data-src') || $(a).find('img').first().attr('src') || null
+    );
+
+    pics.push({ image: href, thumbnail });
+  });
+
+  return pics;
+}
+
+async function scrapeAnimePictures(malId: number): Promise<MalPicture[]> {
+  const res = await http.get(`/anime/${malId}/_/pics`);
+  const $ = cheerio.load(res.data);
+  return parsePictures($);
+}
+
+export async function getAnimePictures(malId: number): Promise<MalPicture[]> {
+  const cacheKey = `mal:anime-pics:${malId}`;
+  const cached = cacheGet<MalPicture[]>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeAnimePictures(malId));
+  cacheSet(cacheKey, result, 'mapping'); // gallery barely changes, reuse 24h bucket
+  return result;
+}
+
+async function scrapeCharacterPictures(characterId: number): Promise<MalPicture[]> {
+  const res = await http.get(`/character/${characterId}/_/pics`);
+  const $ = cheerio.load(res.data);
+  return parsePictures($);
+}
+
+export async function getCharacterPictures(characterId: number): Promise<MalPicture[]> {
+  const cacheKey = `mal:character-pics:${characterId}`;
+  const cached = cacheGet<MalPicture[]>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeCharacterPictures(characterId));
+  cacheSet(cacheKey, result, 'mapping');
+  return result;
+}
