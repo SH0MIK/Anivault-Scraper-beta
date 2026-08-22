@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import axios from 'axios';
-import { malToAnilist, getSiteIds, searchAnilist } from './utils/mapper';
+import { malToAnilist, getSiteIds, getSiteIdsByMal, searchAnilist, SiteIds } from './utils/mapper';
 import { cacheStats } from './utils/cache';
 import { resolveEmbed } from './resolvers/megacloud';
 
@@ -56,7 +56,21 @@ function rewriteHlsPlaylist(req: Request, body: string, sourceUrl: string, ref?:
 
 async function resolveAlId(anilistId?: string, malId?: string): Promise<number | null> {
   if (anilistId) return parseInt(anilistId);
-  if (malId) return malToAnilist(parseInt(malId));
+  if (malId) return malToAnilist(parseInt(malId)); // returns null (not throw) if AniList is down
+  return null;
+}
+
+// Resolve full SiteIds from whichever id was given. Tries AniList first
+// (richer data: zoro/gogoanime via Anify, Miruro support); if AniList is
+// down/unreachable and we only have a malId, falls back to the MAL-only
+// path so search -> info -> episodes keeps working end to end.
+async function resolveSiteIds(anilistId?: string, malId?: string): Promise<SiteIds | null> {
+  const alId = await resolveAlId(anilistId, malId);
+  if (alId) {
+    const info = await getSiteIds(alId);
+    if (info) return info;
+  }
+  if (malId) return getSiteIdsByMal(parseInt(malId));
   return null;
 }
 
@@ -91,9 +105,27 @@ router.get('/search', async (req: Request, res: Response) => {
   if (!q) return res.status(400).json({ error: 'Missing ?q=' });
   try {
     const results = await searchAnilist(q);
-    return res.json({ query: q, count: results.length, results });
+    return res.json({ query: q, count: results.length, results, source: 'anilist' });
   } catch (e) {
-    return res.status(500).json({ error: 'Search failed', detail: String(e) });
+    // AniList unreachable/down -- fall back to our own MAL scraper.
+    // Shape-compatible with the AniList result (id/coverImage/status/format
+    // just come back null since MAL search doesn't carry them), plus
+    // `source: 'mal'` so the frontend can tell which path served the result.
+    try {
+      const malResults = await searchAnime(q, 10);
+      const results = malResults.map((m) => ({
+        id: null,
+        malId: m.malId,
+        title: m.title,
+        coverImage: m.image ?? '',
+        episodes: m.episodes,
+        status: null,
+        format: m.type,
+      }));
+      return res.json({ query: q, count: results.length, results, source: 'mal', warning: 'AniList is currently unavailable -- showing MAL search results' });
+    } catch (e2) {
+      return res.status(500).json({ error: 'Search failed', detail: String(e2) });
+    }
   }
 });
 
@@ -101,10 +133,8 @@ router.get('/info', async (req: Request, res: Response) => {
   const { anilistId, malId } = req.query;
   if (!anilistId && !malId) return res.status(400).json({ error: 'Provide ?anilistId= or ?malId=' });
   try {
-    const alId = await resolveAlId(anilistId as string, malId as string);
-    if (!alId) return res.status(404).json({ error: 'Anime not found on AniList' });
-    const info = await getSiteIds(alId);
-    if (!info) return res.status(404).json({ error: 'Could not fetch info' });
+    const info = await resolveSiteIds(anilistId as string, malId as string);
+    if (!info) return res.status(404).json({ error: 'Anime not found' });
 
     const anikoto = await fetchEpisodes('anikoto', info);
     const episodeCount = anikoto.error ? null : anikoto.episodes.length;
@@ -131,13 +161,11 @@ router.get('/episodes', async (req: Request, res: Response) => {
       return res.json({ anilistId: null, malId: null, title: null, source, siteId: String(heavenId), count: episodes.length, episodes });
     }
 
-    const alId = await resolveAlId(anilistId as string, malId as string);
-    if (!alId) return res.status(404).json({ error: 'Anime not found' });
-    const siteIds = await getSiteIds(alId);
+    const siteIds = await resolveSiteIds(anilistId as string, malId as string);
     if (!siteIds) return res.status(404).json({ error: 'Could not resolve site IDs' });
     const result = await fetchEpisodes(source as Source, siteIds, { heavenId: heavenId ? String(heavenId) : undefined });
     if (result.error) return res.status(404).json({ error: result.error });
-    return res.json({ anilistId: alId, malId: siteIds.malId, title: siteIds.title, source, siteId: result.siteId, count: result.episodes.length, episodes: result.episodes });
+    return res.json({ anilistId: siteIds.anilistId, malId: siteIds.malId, title: siteIds.title, source, siteId: result.siteId, count: result.episodes.length, episodes: result.episodes });
   } catch (e) {
     return res.status(500).json({ error: String(e) });
   }
@@ -154,11 +182,7 @@ router.get('/servers', async (req: Request, res: Response) => {
   try {
     const siteIds = heavenId && source === 'animeheaven'
       ? { anilistId: null, malId: null, title: null, siteIds: { animeheaven: String(heavenId) } }
-      : await (async () => {
-          const alId = await resolveAlId(anilistId as string, malId as string);
-          if (!alId) return null;
-          return getSiteIds(alId);
-        })();
+      : await resolveSiteIds(anilistId as string, malId as string);
     if (!siteIds) return res.status(404).json({ error: 'Could not resolve site IDs' });
 
     const epResult = await fetchEpisodes(source as Source, siteIds, { heavenId: heavenId ? String(heavenId) : undefined });
@@ -205,11 +229,7 @@ async function watchHandler(req: Request, res: Response) {
   try {
     const siteIds = directHeavenId
       ? { anilistId: null, malId: null, title: null, siteIds: { animeheaven: id } }
-      : await (async () => {
-          const alId = await resolveAlId(anilistId, malId);
-          if (!alId) return null;
-          return getSiteIds(alId);
-        })();
+      : await resolveSiteIds(anilistId, malId);
     if (!siteIds) return res.status(404).json({ error: 'Could not resolve anime' });
 
     const epResult = await fetchEpisodes(source as Source, siteIds, { heavenId: heavenOverride });
