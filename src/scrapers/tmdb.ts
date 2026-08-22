@@ -31,6 +31,104 @@ export interface TmdbEpisodeThumbResult {
   log: string[];
 }
 
+export interface TmdbAnimeImages {
+  showId: number;
+  showName: string;
+  poster: string | null;          // w500 — anime "cover" image
+  posterOriginal: string | null;
+  backdrop: string | null;        // w1280 — banner
+  backdropOriginal: string | null;
+  logo: string | null;            // w500 — transparent title logo
+  logoOriginal: string | null;
+}
+
+export interface TmdbAnimeImagesResult {
+  result: TmdbAnimeImages | null;
+  log: string[];
+}
+
+// Prefer English art, then language-neutral (usually vector/textless), then
+// just whatever scored highest — same idea TMDB's own web UI uses.
+function pickBestImage(arr: any[]): any | null {
+  if (!arr || arr.length === 0) return null;
+  const byVotes = [...arr].sort((a, b) => (b.vote_average ?? 0) - (a.vote_average ?? 0));
+  return byVotes.find((i) => i.iso_639_1 === 'en') || byVotes.find((i) => !i.iso_639_1) || byVotes[0];
+}
+
+/**
+ * Poster (cover), backdrop (banner), and logo for a show, by title.
+ * One search + one /images call, cached under the long-lived 'mapping'
+ * bucket since a show's art doesn't change often.
+ */
+export async function getAnimeImages(
+  animeTitle: string,
+  isList = false
+): Promise<TmdbAnimeImagesResult> {
+  const log: string[] = [];
+
+  if (!TMDB_API_KEY) {
+    log.push('TMDB: skipped (no TMDB_API_KEY set on scraper)');
+    return { result: null, log };
+  }
+
+  const cacheKey = `tmdb:images:${animeTitle.toLowerCase()}`;
+  if (!isList) {
+    const cached = cacheGet<TmdbAnimeImages | null>(cacheKey);
+    if (cached !== null) {
+      log.push('TMDB: cache hit');
+      return { result: cached, log };
+    }
+  }
+
+  try {
+    const srch = await tmdbClient.get('/search/tv', {
+      params: { api_key: TMDB_API_KEY, query: animeTitle, language: 'en-US' },
+    });
+    const results = srch.data?.results ?? [];
+
+    if (results.length === 0) {
+      log.push(`TMDB: no show found for '${animeTitle}'`);
+      cacheSet(cacheKey, null, 'mapping');
+      return { result: null, log };
+    }
+
+    const show = results[0];
+    const showId = show.id;
+    log.push(`TMDB: matched '${show.name}' (ID ${showId})`);
+
+    const imgRes = await tmdbClient.get(`/tv/${showId}/images`, {
+      params: { api_key: TMDB_API_KEY, include_image_language: 'en,ja,null' },
+    });
+
+    const posters: any[] = imgRes.data?.posters ?? [];
+    const backdrops: any[] = imgRes.data?.backdrops ?? [];
+    const logos: any[] = imgRes.data?.logos ?? [];
+    log.push(`TMDB images: ${posters.length} posters, ${backdrops.length} backdrops, ${logos.length} logos`);
+
+    const poster = pickBestImage(posters);
+    const backdrop = pickBestImage(backdrops);
+    const logo = pickBestImage(logos);
+
+    const result: TmdbAnimeImages = {
+      showId,
+      showName: show.name,
+      poster: poster ? `https://image.tmdb.org/t/p/w500${poster.file_path}` : null,
+      posterOriginal: poster ? `https://image.tmdb.org/t/p/original${poster.file_path}` : null,
+      backdrop: backdrop ? `https://image.tmdb.org/t/p/w1280${backdrop.file_path}` : null,
+      backdropOriginal: backdrop ? `https://image.tmdb.org/t/p/original${backdrop.file_path}` : null,
+      logo: logo ? `https://image.tmdb.org/t/p/w500${logo.file_path}` : null,
+      logoOriginal: logo ? `https://image.tmdb.org/t/p/original${logo.file_path}` : null,
+    };
+
+    cacheSet(cacheKey, result, 'mapping');
+    return { result, log };
+  } catch (e: any) {
+    const status = e?.response?.status;
+    log.push(`TMDB images: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+    return { result: null, log };
+  }
+}
+
 /**
  * Looks up an episode-specific still from TMDB by anime title + episode number.
  * Tries the top 2 search matches, seasons 1 and 2 each, same as the site did
