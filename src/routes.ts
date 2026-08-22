@@ -8,7 +8,7 @@ import { getEpisodes, getServers, getEmbedUrl } from './scrapers/senshi';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
-import { getAnimeDetails, getEpisodes as getMalEpisodes, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations } from './scrapers/mal';
+import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks } from './scrapers/mal';
 
 const router = Router();
 
@@ -657,6 +657,44 @@ router.get('/mal/anime/:id/episodes', async (req: Request, res: Response) => {
     return res.json(result);
   } catch (e: any) {
     return res.status(502).json({ error: 'MAL episode scrape failed', detail: e?.message || String(e) });
+  }
+});
+
+// GET /api/mal/anime/:id/episodes/:epNum -- single episode, Jikan-shaped
+router.get('/mal/anime/:id/episodes/:epNum', async (req: Request, res: Response) => {
+  const malId = parseInt(req.params.id, 10);
+  const epNum = parseInt(req.params.epNum, 10);
+  if (isNaN(malId) || isNaN(epNum)) return res.status(400).json({ error: 'id and epNum must be numbers' });
+  try {
+    const result = await getMalEpisode(malId, epNum);
+    if (!result) return res.status(404).json({ error: `Episode ${epNum} not found` });
+    return res.json({ data: result });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'MAL episode scrape failed', detail: e?.message || String(e) });
+  }
+});
+
+// GET /api/mal/search?q=naruto&limit=8 -- MAL text search, Jikan-shaped
+router.get('/mal/search', async (req: Request, res: Response) => {
+  const q = req.query.q as string;
+  if (!q) return res.status(400).json({ error: 'Missing ?q=' });
+  const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 8;
+  try {
+    const result = await searchAnime(q, isNaN(limit) ? 8 : limit);
+    return res.json({ data: result });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'MAL search scrape failed', detail: e?.message || String(e) });
+  }
+});
+
+router.get('/mal/anime/:id/external', async (req: Request, res: Response) => {
+  const malId = parseInt(req.params.id, 10);
+  if (isNaN(malId)) return res.status(400).json({ error: 'id must be a number' });
+  try {
+    const result = await getExternalLinks(malId);
+    return res.json({ data: result });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'MAL external-links scrape failed', detail: e?.message || String(e) });
   }
 });
 
