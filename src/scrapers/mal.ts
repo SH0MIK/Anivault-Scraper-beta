@@ -55,6 +55,11 @@ class RateLimitQueue {
 
 const malQueue = new RateLimitQueue(parseInt(process.env.MAL_SCRAPE_DELAY_MS || '700'));
 
+export interface MalStreamingPlatform {
+  name: string;
+  url: string;
+}
+
 export interface MalAnimeDetails {
   malId: number;
   title: string;
@@ -77,6 +82,47 @@ export interface MalAnimeDetails {
   genres: string[];
   studios: string[];
   source: string | null;
+  streamingPlatforms: MalStreamingPlatform[];
+}
+
+// MAL's "Streaming Platforms" sidebar block sits on the base /anime/{id}
+// page, same page scrapeAnimeDetails() already fetches -- so this parses
+// straight off that page's raw HTML instead of costing a second scrape.
+// Confirmed live (Aug 2026): the block reads
+//   Streaming Platforms [Crunchyroll](url "Crunchyroll") [Netflix](url "Netflix") ...
+//   [More services](javascript:void(0);)May be unavailable in your region.
+// "More services" reveals extra platforms client-side via JS but the
+// anchors are already present in the raw HTML (just CSS-hidden), so this
+// picks up the full list, not just the first few shown by default.
+// Bounded the same way the video/recommendations sections below are --
+// text-marker start/end rather than a guessed class name, since this
+// sidebar block's own class hasn't been confirmed and MAL's boilerplate
+// note ("May be unavailable...") or the "Characters & Staff" tab-nav link
+// (which reliably follows every variant of this section, including a
+// title with zero platforms) are far more stable anchors than markup.
+function parseStreamingPlatforms(html: string): MalStreamingPlatform[] {
+  const block = extractBlock(html, 'Streaming Platforms', [
+    'May be unavailable in your region',
+    'Characters &amp; Staff',
+    'Characters & Staff',
+  ]);
+  if (!block) return [];
+
+  const $$ = cheerio.load(block);
+  const out: MalStreamingPlatform[] = [];
+  const seen = new Set<string>();
+
+  $$('a[href^="http"]').each((_, a) => {
+    const href = $$(a).attr('href');
+    if (!href || href.includes('myanimelist.net')) return; // "view on fandom" etc, not a streaming link
+    if (seen.has(href)) return;
+    const name = $$(a).attr('title')?.trim() || $$(a).text().trim();
+    if (!name) return;
+    seen.add(href);
+    out.push({ name, url: href });
+  });
+
+  return out;
 }
 
 // MAL's sidebar rows look like:
@@ -173,6 +219,7 @@ async function scrapeAnimeDetails(malId: number): Promise<MalAnimeDetails | null
     genres: sidebarLinks($, 'Genres'),
     studios: sidebarLinks($, 'Studios'),
     source: sidebarText($, 'Source'),
+    streamingPlatforms: parseStreamingPlatforms(res.data),
   };
 }
 
@@ -187,6 +234,17 @@ export async function getAnimeDetails(malId: number): Promise<MalAnimeDetails | 
   const result = await malQueue.add(() => scrapeAnimeDetails(malId));
   if (result) cacheSet(cacheKey, result, 'mapping');
   return result;
+}
+
+// Piggybacks on getAnimeDetails()'s cache -- streamingPlatforms is parsed
+// off the same page fetch there, so this never costs an extra scrape/queue
+// slot on its own. Mirrors Jikan's /anime/{id}/streaming response shape
+// ({ data: [{ name, url }] }) at the route layer, matching the app's
+// existing "scraper first, Jikan as fallback" convention for every other
+// endpoint in this file.
+export async function getStreamingPlatforms(malId: number): Promise<MalStreamingPlatform[]> {
+  const details = await getAnimeDetails(malId);
+  return details?.streamingPlatforms ?? [];
 }
 
 // ══════════════════════════════════════════════════════════════
