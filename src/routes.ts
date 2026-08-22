@@ -9,6 +9,7 @@ import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml } from './scrapers/mal';
+import { getSeasonNow, getTopBanners } from './scrapers/anilist';
 
 const router = Router();
 
@@ -798,6 +799,25 @@ router.get('/mal/anime/:id/recommendations', async (req: Request, res: Response)
     return res.json({ data: result });
   } catch (e: any) {
     return res.status(502).json({ error: 'MAL recommendations scrape failed', detail: e?.message || String(e) });
+  }
+});
+
+router.get('/anilist/season', async (_req: Request, res: Response) => {
+  try {
+    const result = await getSeasonNow();
+    return res.json(result);
+  } catch (e: any) {
+    return res.status(502).json({ error: 'AniList season fetch failed', detail: e?.message || String(e) });
+  }
+});
+
+router.get('/anilist/top-banners', async (req: Request, res: Response) => {
+  try {
+    const limit = parseInt(req.query.limit as string, 10) || 200;
+    const result = await getTopBanners(limit);
+    return res.json({ data: result });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'AniList top-banners fetch failed', detail: e?.message || String(e) });
   }
 });
 
