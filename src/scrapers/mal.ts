@@ -1121,6 +1121,18 @@ export interface MalExternalLink {
   url: string;
 }
 
+// MAL's global site footer/nav (social links, app store badges, Google
+// policy links, ad-partner links) sits on every single page and gets
+// scraped up by the generic "any outbound anchor" approach above along
+// with the actual anime-specific external links. None of it varies by
+// anime ID, so it's pure noise for a caller filtering this list -- drop
+// anything matching these known footer/nav domains.
+const FOOTER_DOMAINS = [
+  'facebook.com', 'x.com', 'instagram.com', 'discord.gg',
+  'apps.apple.com', 'play.google.com', 'policies.google.com',
+  'otakumode.com', 'honeyfeed.fm',
+];
+
 function parseExternalLinks($: Doc): MalExternalLink[] {
   const out: MalExternalLink[] = [];
   const seen = new Set<string>();
@@ -1129,6 +1141,7 @@ function parseExternalLinks($: Doc): MalExternalLink[] {
     const href = $(a).attr('href');
     if (!href) return;
     if (href.includes('myanimelist.net')) return; // internal nav/social-share links
+    if (FOOTER_DOMAINS.some((d) => href.includes(d))) return;
     if (seen.has(href)) return;
 
     const name = $(a).text().trim() || new URL(href).hostname.replace(/^www\./, '');
