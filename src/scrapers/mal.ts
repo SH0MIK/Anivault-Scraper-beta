@@ -196,13 +196,21 @@ export async function getAnimeDetails(malId: number): Promise<MalAnimeDetails | 
 // images:{jpg:{image_url}}, type, episodes, score, url }] }. Only the
 // fields the client autocomplete/thumbnail-matching scripts actually read.
 //
-// NOTE: MAL's search results markup has changed shape a few times over
-// the years. This targets the current table-row layout
-// (tr.hoverinfo_trigger, a[href*="/anime/{id}/"] for the title link,
-// img[data-src] for the poster, td containing "TV"/"Movie"/etc + episode
-// count + score). If this comes back empty against a live query, open
-// devtools on a MAL search results page and check the row/selector names
-// haven't shifted again before assuming the scrape logic is wrong.
+// Confirmed live (Aug 2026) against /anime.php?q={q}&cat=anime: MAL serves
+// the "sp" (mobile) layout for this endpoint regardless of desktop UA.
+// Each result is a `div.box-unit1 > a.box-unit1-btn` card:
+//   <a class="box-unit1-btn" href="https://myanimelist.net/anime/{id}/{slug}">
+//     <img data-src="https://cdn.myanimelist.net/r/130x194/images/anime/.../....jpg?s=...">
+//     <ul class="data flex">
+//       <li class="title">Naruto: Shippuuden</li>
+//       <li class="fn-grey5..."><span>Score</span>8.29</li>
+//       <dd class="fn-grey5...">TV 500eps</dd>
+//       <li class="text mt8">synopsis snippet...</li>
+//     </ul>
+//   </a>
+// If this ever comes back empty again, re-check with a plain curl (no
+// cookies/extension) -- MAL may be keying the sp/pc layout off something
+// request-specific rather than a fixed default.
 // ══════════════════════════════════════════════════════════════
 
 export interface MalSearchResult {
@@ -219,39 +227,39 @@ function parseSearchRows($: Doc): MalSearchResult[] {
   const results: MalSearchResult[] = [];
   const seen = new Set<number>();
 
-  $('tr').each((_, tr) => {
-    const row = $(tr);
-    const link = row.find('a[href*="/anime/"]').filter((_, a) => /\/anime\/\d+\//.test($(a).attr('href') || '')).first();
-    const href = link.attr('href');
+  $('a.box-unit1-btn').each((_, a) => {
+    const card = $(a);
+    const href = card.attr('href');
     if (!href) return;
     const idMatch = href.match(/\/anime\/(\d+)\//);
     if (!idMatch) return;
     const malId = parseInt(idMatch[1], 10);
     if (seen.has(malId)) return;
 
-    const title = link.find('strong').first().text().trim() || link.text().trim();
+    const title = card.find('li.title').first().text().trim();
     if (!title) return;
 
-    const img = row.find('img').first();
+    const img = card.find('img').first();
     const image = fullSizeImage(img.attr('data-src') || img.attr('src') || null);
 
-    // The info cell is free text like "TV (24 eps)\nApr 2002 -\n7.97" —
-    // pull out type/episodes/score with loose regexes rather than a
-    // strict selector, since this cell's wrapping markup shifts more
-    // than its content does.
-    const infoText = row.text();
-    const typeMatch = infoText.match(/\b(TV|Movie|OVA|ONA|Special|Music)\b/);
-    const epMatch = infoText.match(/\((\d+)\s*eps?\)/i);
-    const scoreMatch = infoText.match(/\b(\d\.\d{2})\b/);
+    // Score sits as trailing text right after the "Score" label span inside
+    // the same <li> -- strip the span's own text out and parse what's left.
+    const scoreLi = card.find('li').filter((_, li) => $(li).find('span').first().text().trim() === 'Score').first();
+    const scoreText = scoreLi.length ? scoreLi.clone().find('span').remove().end().text().trim() : '';
+    const score = scoreText && !isNaN(parseFloat(scoreText)) ? parseFloat(scoreText) : null;
+
+    // The type/episode line is a <dd> like "TV 500eps" / "Movie 1eps".
+    const ddText = card.find('dd').first().text().trim();
+    const ddMatch = ddText.match(/^(\S+)\s+(\d+)\s*eps?/i);
 
     seen.add(malId);
     results.push({
       malId,
       title,
       image,
-      type: typeMatch ? typeMatch[1] : null,
-      episodes: epMatch ? parseInt(epMatch[1], 10) : null,
-      score: scoreMatch ? parseFloat(scoreMatch[1]) : null,
+      type: ddMatch ? ddMatch[1] : null,
+      episodes: ddMatch ? parseInt(ddMatch[2], 10) : null,
+      score,
       url: href.startsWith('http') ? href : `${BASE}${href}`,
     });
   });
