@@ -190,6 +190,97 @@ export async function getAnimeDetails(malId: number): Promise<MalAnimeDetails | 
 }
 
 // ══════════════════════════════════════════════════════════════
+// Text search — /anime.php?q={q}&cat=anime
+//
+// Shape mirrors Jikan's /anime?q= search: { data: [{ mal_id, title,
+// images:{jpg:{image_url}}, type, episodes, score, url }] }. Only the
+// fields the client autocomplete/thumbnail-matching scripts actually read.
+//
+// NOTE: MAL's search results markup has changed shape a few times over
+// the years. This targets the current table-row layout
+// (tr.hoverinfo_trigger, a[href*="/anime/{id}/"] for the title link,
+// img[data-src] for the poster, td containing "TV"/"Movie"/etc + episode
+// count + score). If this comes back empty against a live query, open
+// devtools on a MAL search results page and check the row/selector names
+// haven't shifted again before assuming the scrape logic is wrong.
+// ══════════════════════════════════════════════════════════════
+
+export interface MalSearchResult {
+  malId: number;
+  title: string;
+  image: string | null;
+  type: string | null;
+  episodes: number | null;
+  score: number | null;
+  url: string;
+}
+
+function parseSearchRows($: Doc): MalSearchResult[] {
+  const results: MalSearchResult[] = [];
+  const seen = new Set<number>();
+
+  $('tr').each((_, tr) => {
+    const row = $(tr);
+    const link = row.find('a[href*="/anime/"]').filter((_, a) => /\/anime\/\d+\//.test($(a).attr('href') || '')).first();
+    const href = link.attr('href');
+    if (!href) return;
+    const idMatch = href.match(/\/anime\/(\d+)\//);
+    if (!idMatch) return;
+    const malId = parseInt(idMatch[1], 10);
+    if (seen.has(malId)) return;
+
+    const title = link.find('strong').first().text().trim() || link.text().trim();
+    if (!title) return;
+
+    const img = row.find('img').first();
+    const image = fullSizeImage(img.attr('data-src') || img.attr('src') || null);
+
+    // The info cell is free text like "TV (24 eps)\nApr 2002 -\n7.97" —
+    // pull out type/episodes/score with loose regexes rather than a
+    // strict selector, since this cell's wrapping markup shifts more
+    // than its content does.
+    const infoText = row.text();
+    const typeMatch = infoText.match(/\b(TV|Movie|OVA|ONA|Special|Music)\b/);
+    const epMatch = infoText.match(/\((\d+)\s*eps?\)/i);
+    const scoreMatch = infoText.match(/\b(\d\.\d{2})\b/);
+
+    seen.add(malId);
+    results.push({
+      malId,
+      title,
+      image,
+      type: typeMatch ? typeMatch[1] : null,
+      episodes: epMatch ? parseInt(epMatch[1], 10) : null,
+      score: scoreMatch ? parseFloat(scoreMatch[1]) : null,
+      url: href.startsWith('http') ? href : `${BASE}${href}`,
+    });
+  });
+
+  return results;
+}
+
+async function scrapeSearch(query: string, limit: number): Promise<MalSearchResult[]> {
+  const res = await http.get('/anime.php', { params: { q: query, cat: 'anime' } });
+  const $ = cheerio.load(res.data);
+  return parseSearchRows($).slice(0, limit);
+}
+
+// Deliberately short TTL bucket (reuses 'stream' = 5min) — unlike anime
+// metadata, search is query-keyed and low-value to hold onto for 24h; a
+// typo'd or one-off query would otherwise squat in cache forever.
+export async function searchAnime(query: string, limit = 8): Promise<MalSearchResult[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const cacheKey = `mal:search:${q.toLowerCase()}:${limit}`;
+  const cached = cacheGet<MalSearchResult[]>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeSearch(q, limit));
+  cacheSet(cacheKey, result, 'stream');
+  return result;
+}
+
+// ══════════════════════════════════════════════════════════════
 // Episode list — /anime/{id}/_/episode
 //
 // MAL's routing keys off the numeric ID; the slug segment is cosmetic and
@@ -306,6 +397,19 @@ export async function getAllEpisodes(malId: number): Promise<MalEpisode[]> {
     page++;
   }
   return all;
+}
+
+// Single-episode lookup, matching Jikan's /anime/{id}/episodes/{epNum}.
+// MAL has no per-episode page of its own (episode numbers only exist as
+// rows on the paginated list), so this just jumps straight to whichever
+//100-episode page contains epNum and picks the matching row out of the
+// already-cached getEpisodes() result -- no extra scrape cost for anime
+// under 100 episodes, and only one extra page fetch beyond that.
+export async function getEpisode(malId: number, epNum: number): Promise<MalEpisode | null> {
+  if (epNum < 1) return null;
+  const page = Math.floor((epNum - 1) / EPISODES_PER_PAGE) + 1;
+  const { data } = await getEpisodes(malId, page);
+  return data.find((e) => e.malId === epNum) ?? null;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -954,6 +1058,60 @@ export interface MalRecommendation {
   title: string;
   image: string | null;
   votes: number;
+}
+
+// ══════════════════════════════════════════════════════════════
+// External links — /anime/{id}/_/external_links
+//
+// Mirrors Jikan's /anime/{id}/external: { data: [{ name, url }] }, one
+// entry per outbound link (official site, streaming platforms, wikis,
+// etc). This is a generic "grab every non-MAL outbound anchor on the
+// page" scrape rather than a section-specific one, since the caller
+// (TMDB-ID resolution in home-js.ts / lists.ts) just filters this list
+// for a themoviedb.org URL and doesn't care which section it came from.
+//
+// NOTE: same caveat as search above -- verify against a live page if this
+// starts coming back empty; MAL's external-links tab markup is one of the
+// less commonly-scraped ones so it's had less real-world testing here.
+// ══════════════════════════════════════════════════════════════
+
+export interface MalExternalLink {
+  name: string;
+  url: string;
+}
+
+function parseExternalLinks($: Doc): MalExternalLink[] {
+  const out: MalExternalLink[] = [];
+  const seen = new Set<string>();
+
+  $('a[href^="http"]').each((_, a) => {
+    const href = $(a).attr('href');
+    if (!href) return;
+    if (href.includes('myanimelist.net')) return; // internal nav/social-share links
+    if (seen.has(href)) return;
+
+    const name = $(a).text().trim() || new URL(href).hostname.replace(/^www\./, '');
+    seen.add(href);
+    out.push({ name, url: href });
+  });
+
+  return out;
+}
+
+async function scrapeExternalLinks(malId: number): Promise<MalExternalLink[]> {
+  const res = await http.get(`/anime/${malId}/_/external_links`);
+  const $ = cheerio.load(res.data);
+  return parseExternalLinks($);
+}
+
+export async function getExternalLinks(malId: number): Promise<MalExternalLink[]> {
+  const cacheKey = `mal:external:${malId}`;
+  const cached = cacheGet<MalExternalLink[]>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeExternalLinks(malId));
+  cacheSet(cacheKey, result, 'mapping');
+  return result;
 }
 
 function scrapeRecommendationsHtml(html: string, currentAnimeId: number): MalRecommendation[] {
