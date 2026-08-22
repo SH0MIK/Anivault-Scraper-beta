@@ -802,6 +802,19 @@ router.get('/mal/anime/:id/recommendations', async (req: Request, res: Response)
   }
 });
 
+// AniList's actual error message (e.g. "your IP has been blocked") lives in
+// the response body, which axios normally throws away in favor of a generic
+// "Request failed with status code 403" on e.message. Surface the real body
+// so a 403/429 is self-diagnosing instead of a guessing game.
+function aniListErrorDetail(e: any): string {
+  const body = e?.response?.data;
+  if (body) {
+    const msg = body?.errors?.[0]?.message || (typeof body === 'string' ? body : JSON.stringify(body));
+    return `HTTP ${e.response.status}: ${String(msg).slice(0, 400)}`;
+  }
+  return e?.message || String(e);
+}
+
 router.get('/anilist/season', async (req: Request, res: Response) => {
   try {
     const result = await getSeasonNow();
@@ -812,7 +825,7 @@ router.get('/anilist/season', async (req: Request, res: Response) => {
     }
     return res.json(result);
   } catch (e: any) {
-    return res.status(502).json({ error: 'AniList season fetch failed', detail: e?.message || String(e) });
+    return res.status(502).json({ error: 'AniList season fetch failed', detail: aniListErrorDetail(e) });
   }
 });
 
@@ -826,7 +839,7 @@ router.get('/anilist/top-banners', async (req: Request, res: Response) => {
     }
     return res.json({ data: result });
   } catch (e: any) {
-    return res.status(502).json({ error: 'AniList top-banners fetch failed', detail: e?.message || String(e) });
+    return res.status(502).json({ error: 'AniList top-banners fetch failed', detail: aniListErrorDetail(e) });
   }
 });
 
@@ -838,7 +851,7 @@ router.get('/anilist/id', async (req: Request, res: Response) => {
     if (!anilistId) return res.status(404).json({ error: 'Not found on AniList', malId });
     return res.json({ malId, anilistId });
   } catch (e: any) {
-    return res.status(502).json({ error: 'AniList ID lookup failed', detail: e?.message || String(e) });
+    return res.status(502).json({ error: 'AniList ID lookup failed', detail: aniListErrorDetail(e) });
   }
 });
 
@@ -860,7 +873,7 @@ router.get('/anilist/episodes', async (req: Request, res: Response) => {
     }
     return res.json({ malId, episodes });
   } catch (e: any) {
-    return res.status(502).json({ error: 'AniList episodes fetch failed', detail: e?.message || String(e) });
+    return res.status(502).json({ error: 'AniList episodes fetch failed', detail: aniListErrorDetail(e) });
   }
 });
 
