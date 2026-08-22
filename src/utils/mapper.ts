@@ -3,9 +3,10 @@ import { anilistClient } from './fetch';
 import { cacheGet, cacheSet } from './cache';
 import { findAnimeHeavenId } from '../scrapers/animeheaven';
 import { findAnikotoSlug } from '../scrapers/anikoto';
+import { getAnimeDetails } from '../scrapers/mal';
 
 export interface SiteIds {
-  anilistId: number;
+  anilistId: number | null;
   malId: number | null;
   title: string;
   siteIds: {
@@ -34,18 +35,24 @@ async function enrichAnikoto(result: SiteIds): Promise<SiteIds> {
 }
 
 // MAL ID → AniList ID
+// Returns null (never throws) if AniList is down/unreachable -- callers use
+// that as the signal to fall back to the MAL-only path (getSiteIdsByMal).
 export async function malToAnilist(malId: number): Promise<number | null> {
   const cacheKey = `mal2al:${malId}`;
   const cached = cacheGet<number>(cacheKey);
   if (cached) return cached;
 
-  const query = `query ($malId: Int) {
-    Media(idMal: $malId, type: ANIME) { id idMal title { romaji english } }
-  }`;
-  const res = await anilistClient.post('', { query, variables: { malId } });
-  const id = res.data?.data?.Media?.id ?? null;
-  if (id) cacheSet(cacheKey, id);
-  return id;
+  try {
+    const query = `query ($malId: Int) {
+      Media(idMal: $malId, type: ANIME) { id idMal title { romaji english } }
+    }`;
+    const res = await anilistClient.post('', { query, variables: { malId } });
+    const id = res.data?.data?.Media?.id ?? null;
+    if (id) cacheSet(cacheKey, id);
+    return id;
+  } catch {
+    return null;
+  }
 }
 
 // Fetch title from AniList for a given anilistId
@@ -111,6 +118,42 @@ export async function getSiteIds(anilistId: number): Promise<SiteIds | null> {
     const slug = result.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     result.siteIds.zoro = `${slug}-${anilistId}`;
   }
+
+  cacheSet(cacheKey, result);
+  return result;
+}
+
+// AniList-free fallback: build SiteIds from a MAL ID alone (title comes from
+// your own MAL scraper instead of AniList's getAnilistTitle). Used when
+// malToAnilist can't resolve an AniList ID (AniList down/blocked). Note:
+// zoro/gogoanime via Anify and Miruro episodes both key off anilistId, so
+// those stay unavailable here -- everything keyed off title (animeheaven,
+// anikoto) or malId (senshi) still works normally.
+export async function getSiteIdsByMal(malId: number): Promise<SiteIds | null> {
+  const cacheKey = `siteids:mal:${malId}`;
+  const cached = cacheGet<SiteIds>(cacheKey);
+  if (cached) {
+    const wasMissingAnimeHeaven = !cached.siteIds.animeheaven;
+    const wasMissingAnikoto = !cached.siteIds.anikoto;
+    const enriched = await enrichAnikoto(await enrichAnimeHeaven(cached));
+    if ((wasMissingAnimeHeaven && enriched.siteIds.animeheaven) || (wasMissingAnikoto && enriched.siteIds.anikoto)) {
+      cacheSet(cacheKey, enriched);
+    }
+    return enriched;
+  }
+
+  const details = await getAnimeDetails(malId).catch(() => null);
+  if (!details) return null;
+
+  const result: SiteIds = {
+    anilistId: null,
+    malId,
+    title: details.title || details.titleEnglish || 'Unknown',
+    siteIds: {},
+  };
+
+  await enrichAnimeHeaven(result);
+  await enrichAnikoto(result);
 
   cacheSet(cacheKey, result);
   return result;
