@@ -108,3 +108,38 @@ export async function getTopBanners(limit = 200): Promise<Record<string, string>
   cacheSet(cacheKey, map, 'mapping');
   return map;
 }
+
+export interface AniListStreamingEpisode {
+  title: string | null;
+  thumbnail: string | null;
+  url: string | null;
+  site: string | null;
+}
+
+const STREAMING_EPISODES_QUERY = `
+  query ($malId: Int) {
+    Media(idMal: $malId, type: ANIME) {
+      streamingEpisodes { title thumbnail url site }
+    }
+  }`;
+
+// Per-title episode thumbnails (AniList's "streamingEpisodes" block --
+// usually sourced from whichever streaming partner AniList itself tracks
+// stills for, most often Crunchyroll). This was previously called directly
+// from the site's episode-thumb.ts via graphql.anilist.co, which -- same as
+// the season data -- silently always failed on Cloudflare Workers (blocked
+// IP range), so this source has effectively never worked. Routed through
+// here now for the same reason as getSeasonNow/getTopBanners above.
+export async function getStreamingEpisodes(malId: number): Promise<AniListStreamingEpisode[]> {
+  const cacheKey = `anilist:episodes:${malId}`;
+  const cached = cacheGet<AniListStreamingEpisode[]>(cacheKey);
+  if (cached) return cached;
+
+  const res = await anilistClient.post('', { query: STREAMING_EPISODES_QUERY, variables: { malId } });
+  if (res.data?.errors?.length) {
+    throw new Error('AniList GraphQL error: ' + JSON.stringify(res.data.errors).slice(0, 300));
+  }
+  const episodes: AniListStreamingEpisode[] = res.data?.data?.Media?.streamingEpisodes ?? [];
+  cacheSet(cacheKey, episodes, 'episodes');
+  return episodes;
+}
