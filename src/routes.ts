@@ -9,7 +9,7 @@ import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml } from './scrapers/mal';
-import { getSeasonNow, getTopBanners } from './scrapers/anilist';
+import { getSeasonNow, getTopBanners, getStreamingEpisodes } from './scrapers/anilist';
 
 const router = Router();
 
@@ -827,6 +827,28 @@ router.get('/anilist/top-banners', async (req: Request, res: Response) => {
     return res.json({ data: result });
   } catch (e: any) {
     return res.status(502).json({ error: 'AniList top-banners fetch failed', detail: e?.message || String(e) });
+  }
+});
+
+router.get('/anilist/episodes', async (req: Request, res: Response) => {
+  const malId = parseInt(req.query.malId as string, 10);
+  if (isNaN(malId)) return res.status(400).json({ error: 'malId required' });
+  try {
+    const episodes = await getStreamingEpisodes(malId);
+    const ep = parseInt(req.query.ep as string, 10);
+    if (!isNaN(ep)) {
+      // Same "episode N" title-matching rule episode-thumb.ts already uses,
+      // done here too so callers that only care about one episode don't
+      // need to duplicate the regex client-side.
+      const match = episodes.find((e) => {
+        const m = (e.title ?? '').match(/(?:episode|ep\.?)\s*(\d+)/i);
+        return m ? parseInt(m[1], 10) === ep : false;
+      }) || null;
+      return res.json({ malId, ep, episode: match });
+    }
+    return res.json({ malId, episodes });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'AniList episodes fetch failed', detail: e?.message || String(e) });
   }
 });
 
