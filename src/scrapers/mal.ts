@@ -869,7 +869,7 @@ function parseMusicVideoSongs(text: string): { title: string; artist: string }[]
     // Cut off at the next entry's video label (e.g. "ED 2 (Artist ver.)
     // play") or any leftover "play" boilerplate bleeding in from it.
     artist = artist.replace(/\b(?:ED|OP|PV)\s*\d+[\s\S]*$/i, '').trim();
-    artist = artist.replace(/\bplay\b[\s\S]*$/i, '').trim();
+    artist = artist.replace(/play[\s\S]*$/i, '').trim();
     artist = artist.replace(/[,\s]+$/, '').trim();
     songs.push({ title: m[1].trim(), artist });
   }
@@ -881,7 +881,7 @@ function extractVideoLinks($: Doc): { label: string; youtubeId: string | null; e
   $('a[href*="/embed/"]').each((_, a) => {
     const href = $(a).attr('href');
     if (!href) return;
-    const label = $(a).text().replace(/\bplay\b\s*$/i, '').trim();
+    const label = $(a).text().replace(/play\s*$/i, '').trim();
     const idMatch = href.match(/\/embed\/([a-zA-Z0-9_-]+)/);
     out.push({ label, youtubeId: idMatch ? idMatch[1] : null, embedUrl: href });
   });
