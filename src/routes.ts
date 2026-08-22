@@ -11,7 +11,7 @@ import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scr
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml } from './scrapers/mal';
 import { getSeasonNow, getTopBanners, getStreamingEpisodes } from './scrapers/anilist';
 import { getEpisodeThumbnail as getTmdbEpisodeThumbnail, getAnimeImages as getTmdbAnimeImages, extractSeasonHint } from './scrapers/tmdb';
-import { getKitsuAnimeId, getEpisodeThumbnail as getKitsuEpisodeThumbnail } from './scrapers/kitsu';
+import { getKitsuAnimeId, getEpisodeThumbnail as getKitsuEpisodeThumbnail, getAnimeImages as getKitsuAnimeImages } from './scrapers/kitsu';
 
 const router = Router();
 
@@ -1005,6 +1005,26 @@ router.get('/tmdb/anime', async (req: Request, res: Response) => {
   }
 });
 
+// Shared by /kitsu/* routes: resolves a MAL ID / title into a Kitsu anime
+// ID (MAL mapping first, title search as fallback — see kitsu.ts). Fetches
+// the MAL title lazily only when needed (malId given, no title, and the
+// mapping fails) so the common case (malId with a working mapping) doesn't
+// pay for an extra MAL scrape it doesn't need.
+async function resolveKitsuAnimeId(req: Request, log: string[]): Promise<number | null | 'mal-not-found'> {
+  const rawTitle = req.query.title as string | undefined;
+  const malId = parseInt(req.query.malId as string, 10);
+
+  let title = rawTitle ?? null;
+  if (!title && !isNaN(malId)) {
+    const details = await getAnimeDetails(malId);
+    if (!details) return 'mal-not-found';
+    title = details.titleEnglish || details.title;
+    log.push(`Resolved MAL ID ${malId} -> title '${title}' (for Kitsu title-search fallback)`);
+  }
+
+  return getKitsuAnimeId(isNaN(malId) ? null : malId, title, log);
+}
+
 // GET /api/kitsu/episode-thumb?ep=5(&title=...|&malId=16498)[&list=1]
 // Ported from the site's episode-thumb.ts "Source 1: Kitsu" block. Unlike
 // TMDB, Kitsu mirrors MAL's per-season split (Season 2 has its own Kitsu
@@ -1015,24 +1035,16 @@ router.get('/tmdb/anime', async (req: Request, res: Response) => {
 router.get('/kitsu/episode-thumb', async (req: Request, res: Response) => {
   const epNum = parseInt(req.query.ep as string, 10);
   if (isNaN(epNum)) return res.status(400).json({ error: 'Missing/invalid ?ep=' });
-
-  const rawTitle = req.query.title as string | undefined;
-  const malId = parseInt(req.query.malId as string, 10);
-  if (!rawTitle && isNaN(malId)) return res.status(400).json({ error: 'Provide ?title= or ?malId=' });
+  if (!(req.query.title as string) && isNaN(parseInt(req.query.malId as string, 10))) {
+    return res.status(400).json({ error: 'Provide ?title= or ?malId=' });
+  }
 
   const isList = req.query.list === '1';
   const log: string[] = [];
 
   try {
-    let title = rawTitle ?? null;
-    if (!title && !isNaN(malId)) {
-      const details = await getAnimeDetails(malId);
-      if (!details) return res.status(404).json({ error: `MAL ID ${malId} not found`, log });
-      title = details.titleEnglish || details.title;
-      log.push(`Resolved MAL ID ${malId} -> title '${title}' (for Kitsu title-search fallback)`);
-    }
-
-    const kitsuAnimeId = await getKitsuAnimeId(isNaN(malId) ? null : malId, title, log);
+    const kitsuAnimeId = await resolveKitsuAnimeId(req, log);
+    if (kitsuAnimeId === 'mal-not-found') return res.status(404).json({ error: 'MAL ID not found', log });
     if (!kitsuAnimeId) return res.status(404).json({ error: 'No Kitsu anime match found', log });
 
     const { result, log: srcLog } = await getKitsuEpisodeThumbnail(kitsuAnimeId, epNum, isList);
@@ -1042,6 +1054,34 @@ router.get('/kitsu/episode-thumb', async (req: Request, res: Response) => {
     return res.json({ data: result, log });
   } catch (e: any) {
     return res.status(502).json({ error: 'Kitsu episode-thumb fetch failed', detail: e?.message || String(e), log });
+  }
+});
+
+// GET /api/kitsu/anime(?title=...|?malId=16498)[&list=1]
+// Poster + cover (banner) art from Kitsu — same MAL-ID/title resolution as
+// /kitsu/episode-thumb. Kitsu has no logo art type and no per-season art
+// (each Kitsu anime ID is its own show, so there's nothing to fall back
+// between the way TMDB's poster needed to).
+router.get('/kitsu/anime', async (req: Request, res: Response) => {
+  if (!(req.query.title as string) && isNaN(parseInt(req.query.malId as string, 10))) {
+    return res.status(400).json({ error: 'Provide ?title= or ?malId=' });
+  }
+
+  const isList = req.query.list === '1';
+  const log: string[] = [];
+
+  try {
+    const kitsuAnimeId = await resolveKitsuAnimeId(req, log);
+    if (kitsuAnimeId === 'mal-not-found') return res.status(404).json({ error: 'MAL ID not found', log });
+    if (!kitsuAnimeId) return res.status(404).json({ error: 'No Kitsu anime match found', log });
+
+    const { result, log: srcLog } = await getKitsuAnimeImages(kitsuAnimeId, isList);
+    log.push(...srcLog);
+    if (!result) return res.status(404).json({ error: 'No Kitsu images found', log });
+
+    return res.json({ data: result, log });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'Kitsu anime-images fetch failed', detail: e?.message || String(e), log });
   }
 });
 
