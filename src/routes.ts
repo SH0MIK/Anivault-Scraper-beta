@@ -8,7 +8,7 @@ import { getEpisodes, getServers, getEmbedUrl } from './scrapers/senshi';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
-import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks } from './scrapers/mal';
+import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, debugSearchHtml } from './scrapers/mal';
 
 const router = Router();
 
@@ -684,6 +684,20 @@ router.get('/mal/search', async (req: Request, res: Response) => {
     return res.json({ data: result });
   } catch (e: any) {
     return res.status(502).json({ error: 'MAL search scrape failed', detail: e?.message || String(e) });
+  }
+});
+
+// TEMP DEBUG: GET /api/mal/search/debug?q=naruto -- shows what MAL actually
+// sent back to Railway for a search request, to diagnose why parsing came
+// back empty. Safe to remove once search is confirmed working.
+router.get('/mal/search/debug', async (req: Request, res: Response) => {
+  const q = req.query.q as string;
+  if (!q) return res.status(400).json({ error: 'Missing ?q=' });
+  try {
+    const result = await debugSearchHtml(q);
+    return res.json(result);
+  } catch (e: any) {
+    return res.status(502).json({ error: 'MAL search debug fetch failed', detail: e?.message || String(e) });
   }
 });
 
