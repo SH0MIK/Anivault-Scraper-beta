@@ -972,13 +972,14 @@ function scrapeRecommendationsHtml(html: string, currentAnimeId: number): MalRec
     if (!animeId || animeId === currentAnimeId || seen.has(animeId)) continue;
     seen.add(animeId);
 
-    // Bounded to a small window right after the marker -- the poster
-    // image sits immediately there in every case seen so far. The last
-    // entry's chunk has no next-block marker to stop at and runs
-    // unbounded to the end of the page, which without this bound could
-    // fall through past a missing/placeholder poster and match an
-    // unrelated image further down (e.g. the page footer's app badges).
-    const imgMatch = chunk.slice(0, 500).match(/(?:data-src|src)="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i);
+    // Bounded to a window after the marker rather than left fully
+    // unbounded, but wide enough to actually reach the real poster image --
+    // it turned out to sit much further from the marker than a first guess
+    // assumed (500 chars produced nothing but nulls). 4000 is a middle
+    // ground: still short enough to stop well before a distant, unrelated
+    // image (e.g. the page footer's app badges, which broke the last
+    // entry when this was fully unbounded).
+    const imgMatch = chunk.slice(0, 4000).match(/(?:data-src|src)="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i);
     const image = imgMatch ? fullSizeImage(imgMatch[1]) : null;
 
     // Stop counting at the next block's own marker so its votes don't leak
