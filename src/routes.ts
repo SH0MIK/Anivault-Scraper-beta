@@ -830,6 +830,18 @@ router.get('/anilist/top-banners', async (req: Request, res: Response) => {
   }
 });
 
+router.get('/anilist/id', async (req: Request, res: Response) => {
+  const malId = parseInt(req.query.malId as string, 10);
+  if (isNaN(malId)) return res.status(400).json({ error: 'malId required' });
+  try {
+    const anilistId = await malToAnilist(malId);
+    if (!anilistId) return res.status(404).json({ error: 'Not found on AniList', malId });
+    return res.json({ malId, anilistId });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'AniList ID lookup failed', detail: e?.message || String(e) });
+  }
+});
+
 router.get('/anilist/episodes', async (req: Request, res: Response) => {
   const malId = parseInt(req.query.malId as string, 10);
   if (isNaN(malId)) return res.status(400).json({ error: 'malId required' });
