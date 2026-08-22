@@ -972,14 +972,17 @@ function scrapeRecommendationsHtml(html: string, currentAnimeId: number): MalRec
     if (!animeId || animeId === currentAnimeId || seen.has(animeId)) continue;
     seen.add(animeId);
 
-    // Bounded to a window after the marker rather than left fully
-    // unbounded, but wide enough to actually reach the real poster image --
-    // it turned out to sit much further from the marker than a first guess
-    // assumed (500 chars produced nothing but nulls). 4000 is a middle
-    // ground: still short enough to stop well before a distant, unrelated
-    // image (e.g. the page footer's app badges, which broke the last
-    // entry when this was fully unbounded).
-    const imgMatch = chunk.slice(0, 4000).match(/(?:data-src|src)="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i);
+    // Bounded to just the block's own "header" (poster/title/add/permalink)
+    // rather than a guessed character count -- the poster image always sits
+    // before the first individual "Recommended by" write-up begins, no
+    // matter how much comment text follows it. A fixed char-count window
+    // (tried 500, then 4000) kept failing on the highest-vote entries,
+    // which have enough recommendation text before the next block's marker
+    // to blow past any fixed guess; bounding by content instead of length
+    // fixes that and the last-entry-runs-into-the-footer problem in one go.
+    const headerEnd = chunk.search(/Recommended by/);
+    const headerChunk = headerEnd === -1 ? chunk.slice(0, 4000) : chunk.slice(0, headerEnd);
+    const imgMatch = headerChunk.match(/(?:data-src|src)="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i);
     const image = imgMatch ? fullSizeImage(imgMatch[1]) : null;
 
     // Stop counting at the next block's own marker so its votes don't leak
