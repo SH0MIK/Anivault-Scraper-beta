@@ -802,9 +802,14 @@ router.get('/mal/anime/:id/recommendations', async (req: Request, res: Response)
   }
 });
 
-router.get('/anilist/season', async (_req: Request, res: Response) => {
+router.get('/anilist/season', async (req: Request, res: Response) => {
   try {
     const result = await getSeasonNow();
+    const malId = parseInt(req.query.malId as string, 10);
+    if (!isNaN(malId)) {
+      const match = result.media.find((m) => m.idMal === malId) || null;
+      return res.json({ season: result.season, seasonYear: result.seasonYear, media: match });
+    }
     return res.json(result);
   } catch (e: any) {
     return res.status(502).json({ error: 'AniList season fetch failed', detail: e?.message || String(e) });
@@ -815,6 +820,10 @@ router.get('/anilist/top-banners', async (req: Request, res: Response) => {
   try {
     const limit = parseInt(req.query.limit as string, 10) || 200;
     const result = await getTopBanners(limit);
+    const malId = req.query.malId as string;
+    if (malId) {
+      return res.json({ data: { [malId]: result[malId] ?? null } });
+    }
     return res.json({ data: result });
   } catch (e: any) {
     return res.status(502).json({ error: 'AniList top-banners fetch failed', detail: e?.message || String(e) });
