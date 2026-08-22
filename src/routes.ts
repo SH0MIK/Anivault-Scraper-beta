@@ -10,7 +10,7 @@ import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrape
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml } from './scrapers/mal';
 import { getSeasonNow, getTopBanners, getStreamingEpisodes } from './scrapers/anilist';
-import { getEpisodeThumbnail as getTmdbEpisodeThumbnail } from './scrapers/tmdb';
+import { getEpisodeThumbnail as getTmdbEpisodeThumbnail, getAnimeImages as getTmdbAnimeImages } from './scrapers/tmdb';
 
 const router = Router();
 
@@ -898,42 +898,46 @@ router.get('/anilist/episodes', async (req: Request, res: Response) => {
   }
 });
 
+// Shared by every /tmdb/* route: resolves the candidate title(s) to search
+// TMDB with, either from ?title= directly or from ?malId= via the MAL
+// scraper (English title first, falling back to romaji/Japanese if English
+// has no TMDB match). Returns null if neither param was usable, so the
+// caller can 400/404 with its own message.
+async function resolveTmdbTitles(req: Request, log: string[]): Promise<string[] | null> {
+  const rawTitle = req.query.title as string | undefined;
+  if (rawTitle) return [rawTitle];
+
+  const malId = parseInt(req.query.malId as string, 10);
+  if (isNaN(malId)) return null;
+
+  const details = await getAnimeDetails(malId);
+  if (!details) return null;
+
+  const titles = [...new Set([details.titleEnglish, details.title, details.titleJapanese].filter(
+    (t): t is string => !!t
+  ))];
+  log.push(`Resolved MAL ID ${malId} -> titles to try: ${titles.join(' | ')}`);
+  return titles;
+}
+
 // GET /api/tmdb/episode-thumb?ep=5(&title=...|&malId=16498)[&list=1]
 // Ported from the site's episode-thumb.ts "Source 2: TMDB" block. Searches
 // TMDB for the show by title, then checks season 1 and 2 for the requested
 // episode number. `list=1` skips the cache (used by the admin debug view
 // which wants a fresh lookup each time it's opened).
-//
-// Accepts either ?title= directly, or ?malId= — when malId is given, the
-// title is resolved via the MAL scraper first (English title, falling back
-// to the romaji/original title if the English one has no TMDB match), so
-// callers on the site side can pass the MAL ID they already have instead of
-// having to look up the title themselves first.
 router.get('/tmdb/episode-thumb', async (req: Request, res: Response) => {
   const epNum = parseInt(req.query.ep as string, 10);
   if (isNaN(epNum)) return res.status(400).json({ error: 'Missing/invalid ?ep=' });
-
-  const rawTitle = req.query.title as string | undefined;
-  const malId = parseInt(req.query.malId as string, 10);
-  if (!rawTitle && isNaN(malId)) return res.status(400).json({ error: 'Provide ?title= or ?malId=' });
+  if (!(req.query.title as string) && isNaN(parseInt(req.query.malId as string, 10))) {
+    return res.status(400).json({ error: 'Provide ?title= or ?malId=' });
+  }
 
   const isList = req.query.list === '1';
   const log: string[] = [];
 
   try {
-    let titles: string[];
-    if (rawTitle) {
-      titles = [rawTitle];
-    } else {
-      const details = await getAnimeDetails(malId);
-      if (!details) return res.status(404).json({ error: `MAL ID ${malId} not found`, log });
-      titles = [details.titleEnglish, details.title, details.titleJapanese].filter(
-        (t): t is string => !!t
-      );
-      // dedupe while preserving order
-      titles = [...new Set(titles)];
-      log.push(`Resolved MAL ID ${malId} -> titles to try: ${titles.join(' | ')}`);
-    }
+    const titles = await resolveTmdbTitles(req, log);
+    if (!titles) return res.status(404).json({ error: 'MAL ID not found', log });
 
     for (const title of titles) {
       const { result, log: srcLog } = await getTmdbEpisodeThumbnail(title, epNum, isList);
@@ -944,6 +948,34 @@ router.get('/tmdb/episode-thumb', async (req: Request, res: Response) => {
     return res.status(404).json({ error: 'No TMDB still found', log });
   } catch (e: any) {
     return res.status(502).json({ error: 'TMDB episode-thumb fetch failed', detail: e?.message || String(e), log });
+  }
+});
+
+// GET /api/tmdb/anime(?title=...|?malId=16498)[&list=1]
+// Poster (cover), backdrop (banner), and logo for a show in one call — same
+// title resolution as /tmdb/episode-thumb (direct title, or MAL ID resolved
+// via the MAL scraper).
+router.get('/tmdb/anime', async (req: Request, res: Response) => {
+  if (!(req.query.title as string) && isNaN(parseInt(req.query.malId as string, 10))) {
+    return res.status(400).json({ error: 'Provide ?title= or ?malId=' });
+  }
+
+  const isList = req.query.list === '1';
+  const log: string[] = [];
+
+  try {
+    const titles = await resolveTmdbTitles(req, log);
+    if (!titles) return res.status(404).json({ error: 'MAL ID not found', log });
+
+    for (const title of titles) {
+      const { result, log: srcLog } = await getTmdbAnimeImages(title, isList);
+      log.push(...srcLog);
+      if (result) return res.json({ data: result, log });
+    }
+
+    return res.status(404).json({ error: 'No TMDB images found', log });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'TMDB anime-images fetch failed', detail: e?.message || String(e), log });
   }
 });
 
