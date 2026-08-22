@@ -973,14 +973,13 @@ function scrapeRecommendationsHtml(html: string, currentAnimeId: number): MalRec
     seen.add(animeId);
 
     // Bounded to just the block's own "header" (poster/title/add/permalink)
-    // rather than a guessed character count -- the poster image always sits
-    // before the first individual "Recommended by" write-up begins, no
-    // matter how much comment text follows it. A fixed char-count window
-    // (tried 500, then 4000) kept failing on the highest-vote entries,
-    // which have enough recommendation text before the next block's marker
-    // to blow past any fixed guess; bounding by content instead of length
-    // fixes that and the last-entry-runs-into-the-footer problem in one go.
-    const headerEnd = chunk.search(/Recommended by/);
+    // rather than a guessed character count. "Recommended by" as the bound
+    // (tried first) broke every entry -- it apparently matches something
+    // very early in each block, not just at the end of individual write-ups
+    // as assumed. "permalink" is safer: confirmed to appear exactly once
+    // per block, right after the image/title/add links and before any
+    // write-up text begins, regardless of how much text follows after it.
+    const headerEnd = chunk.search(/permalink/i);
     const headerChunk = headerEnd === -1 ? chunk.slice(0, 4000) : chunk.slice(0, headerEnd);
     const imgMatch = headerChunk.match(/(?:data-src|src)="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i);
     const image = imgMatch ? fullSizeImage(imgMatch[1]) : null;
@@ -1002,12 +1001,17 @@ async function scrapeRecommendations(malId: number): Promise<MalRecommendation[]
   return scrapeRecommendationsHtml(res.data, malId);
 }
 
+const RECOMMENDATIONS_LIMIT = 12;
+
 export async function getRecommendations(malId: number): Promise<MalRecommendation[]> {
   const cacheKey = `mal:recommendations:${malId}`;
   const cached = cacheGet<MalRecommendation[]>(cacheKey);
   if (cached) return cached;
 
-  const result = await malQueue.add(() => scrapeRecommendations(malId));
+  const full = await malQueue.add(() => scrapeRecommendations(malId));
+  // Already vote-sorted (highest first) since that's MAL's own list order --
+  // no site UI built on this needs more than a handful for a carousel.
+  const result = full.slice(0, RECOMMENDATIONS_LIMIT);
   cacheSet(cacheKey, result, 'mapping');
   return result;
 }
