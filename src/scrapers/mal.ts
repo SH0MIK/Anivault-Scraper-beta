@@ -930,3 +930,74 @@ export async function getAnimeVideos(malId: number): Promise<{ musicVideos: MalV
   cacheSet(cacheKey, result, 'mapping');
   return result;
 }
+
+// ══════════════════════════════════════════════════════════════
+// Recommendations — /anime/{id}/_/userrecs
+//
+// Each recommended anime can carry dozens of individual user write-ups
+// (title, reasoning paragraph, "Recommended by {user}"), but the site
+// only needs enough for a "You Might Also Like" carousel -- anime ID,
+// title, image, and a vote count -- so this deliberately doesn't scrape
+// the write-up text itself, just counts it.
+//
+// Each block starts with an alt/title attribute containing literal
+// "Anime: {title}" text (confirmed live, appears to be unique per block),
+// used as the split point instead of guessing at wrapping tags/classes.
+// The recommended anime's own ID comes directly from its `/anime/{id}/`
+// link -- simpler and more reliable than parsing MAL's two-ID permalink
+// URL (/recommendations/anime/{a}-{b}), where which of the two IDs is
+// "ours" isn't consistently ordered.
+// ══════════════════════════════════════════════════════════════
+
+export interface MalRecommendation {
+  animeId: number;
+  title: string;
+  image: string | null;
+  votes: number;
+}
+
+function scrapeRecommendationsHtml(html: string, currentAnimeId: number): MalRecommendation[] {
+  const recs: MalRecommendation[] = [];
+  const seen = new Set<number>();
+  const chunks = html.split(/(?="Anime: )/);
+
+  for (const chunk of chunks) {
+    const titleMatch = chunk.match(/^"Anime:\s*([^"]+)"/);
+    if (!titleMatch) continue;
+    const title = titleMatch[1].trim();
+    if (!title) continue;
+
+    const idMatch = chunk.match(/\/anime\/(\d+)\//);
+    const animeId = idMatch ? parseInt(idMatch[1], 10) : null;
+    if (!animeId || animeId === currentAnimeId || seen.has(animeId)) continue;
+    seen.add(animeId);
+
+    const imgMatch = chunk.match(/(?:data-src|src)="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i);
+    const image = imgMatch ? fullSizeImage(imgMatch[1]) : null;
+
+    // Stop counting at the next block's own marker so its votes don't leak
+    // into this one.
+    const nextIdx = chunk.indexOf('"Anime: ', 1);
+    const scoped = nextIdx === -1 ? chunk : chunk.slice(0, nextIdx);
+    const votes = (scoped.match(/Recommended by/g) || []).length;
+
+    recs.push({ animeId, title, image, votes });
+  }
+
+  return recs;
+}
+
+async function scrapeRecommendations(malId: number): Promise<MalRecommendation[]> {
+  const res = await http.get(`/anime/${malId}/_/userrecs`);
+  return scrapeRecommendationsHtml(res.data, malId);
+}
+
+export async function getRecommendations(malId: number): Promise<MalRecommendation[]> {
+  const cacheKey = `mal:recommendations:${malId}`;
+  const cached = cacheGet<MalRecommendation[]>(cacheKey);
+  if (cached) return cached;
+
+  const result = await malQueue.add(() => scrapeRecommendations(malId));
+  cacheSet(cacheKey, result, 'mapping');
+  return result;
+}
