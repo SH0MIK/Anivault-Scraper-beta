@@ -841,7 +841,9 @@ async function loadServers() {
     const base = getBase();
     const serverUrl = selSource === 'animeheaven' && heavenId
       ? `${base}/api/servers?source=animeheaven&heavenId=${encodeURIComponent(heavenId)}&ep=${ep}&type=${selType}`
-      : `${base}/api/servers?anilistId=${selAnime.id}&ep=${ep}&type=${selType}&source=${selSource}`;
+      : selAnime.id
+        ? `${base}/api/servers?anilistId=${selAnime.id}&ep=${ep}&type=${selType}&source=${selSource}`
+        : `${base}/api/servers?malId=${selAnime.malId}&ep=${ep}&type=${selType}&source=${selSource}`;
     const res = await fetch(serverUrl);
     const data = await res.json();
     const servers = data.servers || [];
@@ -947,14 +949,18 @@ function buildUrl() {
     if (selEndpoint === 'episodes') return `${base}/api/episodes?source=animeheaven&heavenId=${encodeURIComponent(heavenId)}`;
   }
   if (!selAnime) return null;
-  const id = selAnime.id;
+  const id = selAnime.id ? selAnime.id : `mal-${selAnime.malId}`;
   if (selEndpoint === 'watch') {
     let url = `${base}/api/watch/${selSource}/${id}/${ep}/${selType}`;
     if (selServer) url += `?server=${encodeURIComponent(selServer)}`;
     return url;
   }
-  if (selEndpoint === 'servers') return `${base}/api/servers?anilistId=${id}&ep=${ep}&type=${selType}&source=${selSource}`;
-  if (selEndpoint === 'episodes') return `${base}/api/episodes?anilistId=${id}&source=${selSource}`;
+  if (selEndpoint === 'servers') return selAnime.id
+    ? `${base}/api/servers?anilistId=${id}&ep=${ep}&type=${selType}&source=${selSource}`
+    : `${base}/api/servers?malId=${selAnime.malId}&ep=${ep}&type=${selType}&source=${selSource}`;
+  if (selEndpoint === 'episodes') return selAnime.id
+    ? `${base}/api/episodes?anilistId=${id}&source=${selSource}`
+    : `${base}/api/episodes?malId=${selAnime.malId}&source=${selSource}`;
   return null;
 }
 function updateUrlPreview() {
