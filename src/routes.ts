@@ -10,6 +10,7 @@ import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrape
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml } from './scrapers/mal';
 import { getSeasonNow, getTopBanners, getStreamingEpisodes } from './scrapers/anilist';
+import { getEpisodeThumbnail as getTmdbEpisodeThumbnail } from './scrapers/tmdb';
 
 const router = Router();
 
@@ -894,6 +895,27 @@ router.get('/anilist/episodes', async (req: Request, res: Response) => {
     return res.json({ malId, episodes });
   } catch (e: any) {
     return res.status(502).json({ error: 'AniList episodes fetch failed', detail: aniListErrorDetail(e) });
+  }
+});
+
+// GET /api/tmdb/episode-thumb?title=...&ep=5[&list=1]
+// Ported from the site's episode-thumb.ts "Source 2: TMDB" block. Searches
+// TMDB for the show by title, then checks season 1 and 2 for the requested
+// episode number. `list=1` skips the cache (used by the admin debug view
+// which wants a fresh lookup each time it's opened).
+router.get('/tmdb/episode-thumb', async (req: Request, res: Response) => {
+  const title = req.query.title as string;
+  const epNum = parseInt(req.query.ep as string, 10);
+  if (!title) return res.status(400).json({ error: 'Missing ?title=' });
+  if (isNaN(epNum)) return res.status(400).json({ error: 'Missing/invalid ?ep=' });
+
+  const isList = req.query.list === '1';
+  try {
+    const { result, log } = await getTmdbEpisodeThumbnail(title, epNum, isList);
+    if (!result) return res.status(404).json({ error: 'No TMDB still found', log });
+    return res.json({ data: result, log });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'TMDB episode-thumb fetch failed', detail: e?.message || String(e) });
   }
 });
 
