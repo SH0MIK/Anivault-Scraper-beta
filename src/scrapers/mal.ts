@@ -972,16 +972,15 @@ function scrapeRecommendationsHtml(html: string, currentAnimeId: number): MalRec
     if (!animeId || animeId === currentAnimeId || seen.has(animeId)) continue;
     seen.add(animeId);
 
-    // Bounded to just the block's own "header" (poster/title/add/permalink)
-    // rather than a guessed character count. "Recommended by" as the bound
-    // (tried first) broke every entry -- it apparently matches something
-    // very early in each block, not just at the end of individual write-ups
-    // as assumed. "permalink" is safer: confirmed to appear exactly once
-    // per block, right after the image/title/add links and before any
-    // write-up text begins, regardless of how much text follows after it.
-    const headerEnd = chunk.search(/permalink/i);
-    const headerChunk = headerEnd === -1 ? chunk.slice(0, 4000) : chunk.slice(0, headerEnd);
-    const imgMatch = headerChunk.match(/(?:data-src|src)="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i);
+    // Unbounded (searches the whole chunk). Bounding this turned out to be
+    // more trouble than it was worth: a 500-char window found nothing, a
+    // 4000-char window broke exactly the highest-voted entries (the ones
+    // that matter most, since results are capped to the top N below), and
+    // a "permalink"-bounded window broke everything. The only real failure
+    // case for unbounded search was the very last entry in the full list
+    // running off the end of the page into the footer -- which no longer
+    // matters now that results are capped well before reaching it.
+    const imgMatch = chunk.match(/(?:data-src|src)="([^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i);
     const image = imgMatch ? fullSizeImage(imgMatch[1]) : null;
 
     // Stop counting at the next block's own marker so its votes don't leak
