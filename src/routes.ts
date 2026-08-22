@@ -11,6 +11,7 @@ import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scr
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml } from './scrapers/mal';
 import { getSeasonNow, getTopBanners, getStreamingEpisodes } from './scrapers/anilist';
 import { getEpisodeThumbnail as getTmdbEpisodeThumbnail, getAnimeImages as getTmdbAnimeImages, extractSeasonHint } from './scrapers/tmdb';
+import { getKitsuAnimeId, getEpisodeThumbnail as getKitsuEpisodeThumbnail } from './scrapers/kitsu';
 
 const router = Router();
 
@@ -1001,6 +1002,46 @@ router.get('/tmdb/anime', async (req: Request, res: Response) => {
     return res.status(404).json({ error: 'No TMDB images found', log });
   } catch (e: any) {
     return res.status(502).json({ error: 'TMDB anime-images fetch failed', detail: e?.message || String(e), log });
+  }
+});
+
+// GET /api/kitsu/episode-thumb?ep=5(&title=...|&malId=16498)[&list=1]
+// Ported from the site's episode-thumb.ts "Source 1: Kitsu" block. Unlike
+// TMDB, Kitsu mirrors MAL's per-season split (Season 2 has its own Kitsu
+// anime ID mapped from the Season 2 MAL ID directly), so no season-hint
+// stripping is needed here -- the MAL ID resolves straight to the right
+// Kitsu anime, falling back to a title search only if that mapping is
+// missing. `list=1` skips the cache.
+router.get('/kitsu/episode-thumb', async (req: Request, res: Response) => {
+  const epNum = parseInt(req.query.ep as string, 10);
+  if (isNaN(epNum)) return res.status(400).json({ error: 'Missing/invalid ?ep=' });
+
+  const rawTitle = req.query.title as string | undefined;
+  const malId = parseInt(req.query.malId as string, 10);
+  if (!rawTitle && isNaN(malId)) return res.status(400).json({ error: 'Provide ?title= or ?malId=' });
+
+  const isList = req.query.list === '1';
+  const log: string[] = [];
+
+  try {
+    let title = rawTitle ?? null;
+    if (!title && !isNaN(malId)) {
+      const details = await getAnimeDetails(malId);
+      if (!details) return res.status(404).json({ error: `MAL ID ${malId} not found`, log });
+      title = details.titleEnglish || details.title;
+      log.push(`Resolved MAL ID ${malId} -> title '${title}' (for Kitsu title-search fallback)`);
+    }
+
+    const kitsuAnimeId = await getKitsuAnimeId(isNaN(malId) ? null : malId, title, log);
+    if (!kitsuAnimeId) return res.status(404).json({ error: 'No Kitsu anime match found', log });
+
+    const { result, log: srcLog } = await getKitsuEpisodeThumbnail(kitsuAnimeId, epNum, isList);
+    log.push(...srcLog);
+    if (!result) return res.status(404).json({ error: 'No Kitsu episode thumbnail found', log });
+
+    return res.json({ data: result, log });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'Kitsu episode-thumb fetch failed', detail: e?.message || String(e), log });
   }
 });
 
