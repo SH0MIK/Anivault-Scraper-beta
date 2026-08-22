@@ -268,7 +268,19 @@ function parseSearchRows($: Doc): MalSearchResult[] {
 }
 
 async function scrapeSearch(query: string, limit: number): Promise<MalSearchResult[]> {
-  const res = await http.get('/anime.php', { params: { q: query, cat: 'anime' } });
+  // Force MAL's mobile ("sp") layout for this request specifically — the
+  // shared `http` client's default UA is desktop Chrome, which appears to
+  // get served MAL's *different* desktop table layout on /anime.php
+  // (unconfirmed shape, not handled here). The sp card layout
+  // (div.box-unit1 > a.box-unit1-btn) parsed by parseSearchRows() below was
+  // confirmed against a real live response, so pin this one call to a
+  // mobile UA rather than guess at the desktop markup too.
+  const res = await http.get('/anime.php', {
+    params: { q: query, cat: 'anime' },
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    },
+  });
   const $ = cheerio.load(res.data);
   return parseSearchRows($).slice(0, limit);
 }
@@ -286,6 +298,27 @@ export async function searchAnime(query: string, limit = 8): Promise<MalSearchRe
   const result = await malQueue.add(() => scrapeSearch(q, limit));
   cacheSet(cacheKey, result, 'stream');
   return result;
+}
+
+// Debug helper only -- returns what the search request actually got back
+// (length + a snippet + whether the expected marker class is present) so a
+// mismatch between "what a browser sees" and "what Railway's outbound
+// request gets" can be diagnosed remotely without shell access to Railway.
+export async function debugSearchHtml(query: string): Promise<{ status: number; length: number; hasBoxUnit1: boolean; snippet: string }> {
+  const res = await http.get('/anime.php', {
+    params: { q: query, cat: 'anime' },
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    },
+    validateStatus: () => true,
+  });
+  const html: string = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+  return {
+    status: res.status,
+    length: html.length,
+    hasBoxUnit1: html.includes('box-unit1'),
+    snippet: html.slice(0, 2000),
+  };
 }
 
 // ══════════════════════════════════════════════════════════════
