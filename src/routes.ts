@@ -8,7 +8,7 @@ import { getEpisodes, getServers, getEmbedUrl } from './scrapers/senshi';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
-import { getAnimeDetails, getEpisodes as getMalEpisodes, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos } from './scrapers/mal';
+import { getAnimeDetails, getEpisodes as getMalEpisodes, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations } from './scrapers/mal';
 
 const router = Router();
 
@@ -724,6 +724,17 @@ router.get('/mal/anime/:id/videos', async (req: Request, res: Response) => {
     return res.json(result);
   } catch (e: any) {
     return res.status(502).json({ error: 'MAL video scrape failed', detail: e?.message || String(e) });
+  }
+});
+
+router.get('/mal/anime/:id/recommendations', async (req: Request, res: Response) => {
+  const malId = parseInt(req.params.id, 10);
+  if (isNaN(malId)) return res.status(400).json({ error: 'id must be a number' });
+  try {
+    const result = await getRecommendations(malId);
+    return res.json({ data: result });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'MAL recommendations scrape failed', detail: e?.message || String(e) });
   }
 });
 
