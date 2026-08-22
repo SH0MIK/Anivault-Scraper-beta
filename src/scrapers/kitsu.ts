@@ -83,6 +83,84 @@ export async function getKitsuAnimeId(
   return kitsuAnimeId;
 }
 
+export interface KitsuAnimeImages {
+  kitsuAnimeId: number;
+  canonicalTitle: string | null;
+  poster: string | null;          // large — anime "cover" image
+  posterOriginal: string | null;
+  cover: string | null;           // large — banner-style wide image (Kitsu calls this "coverImage")
+  coverOriginal: string | null;
+}
+
+export interface KitsuAnimeImagesResult {
+  result: KitsuAnimeImages | null;
+  kitsuAnimeId: number | null;
+  log: string[];
+}
+
+/**
+ * Poster + cover (banner) art for a known Kitsu anime ID. Kitsu doesn't
+ * have a logo art type at all (only posterImage/coverImage), and unlike
+ * TMDB there's no per-season art either -- each Kitsu anime ID has exactly
+ * one poster/cover pair, so there's no season-fallback logic needed here.
+ */
+export async function getAnimeImages(
+  kitsuAnimeId: number,
+  isList = false
+): Promise<KitsuAnimeImagesResult> {
+  const log: string[] = [];
+  const cacheKey = `kitsu:images:${kitsuAnimeId}`;
+
+  if (!isList) {
+    const cached = cacheGet<KitsuAnimeImages | null>(cacheKey);
+    if (cached !== null) {
+      log.push('Kitsu images: cache hit');
+      return { result: cached, kitsuAnimeId, log };
+    }
+  }
+
+  try {
+    const animeRes = await kitsuClient.get(`/anime/${kitsuAnimeId}`);
+    const attrs = animeRes.data?.data?.attributes;
+    if (!attrs) {
+      log.push(`Kitsu anime ${kitsuAnimeId}: not found`);
+      cacheSet(cacheKey, null, 'mapping');
+      return { result: null, kitsuAnimeId, log };
+    }
+
+    const posterImg = attrs.posterImage ?? {};
+    const coverImg = attrs.coverImage ?? {};
+    log.push(`Kitsu images: poster sizes [${Object.keys(posterImg).join(', ') || 'none'}], cover sizes [${Object.keys(coverImg).join(', ') || 'none'}]`);
+
+    const poster = posterImg.large ?? posterImg.medium ?? posterImg.original ?? null;
+    const posterOriginal = posterImg.original ?? poster;
+    const cover = coverImg.large ?? coverImg.original ?? null;
+    const coverOriginal = coverImg.original ?? cover;
+
+    if (!poster && !cover) {
+      log.push(`Kitsu anime ${kitsuAnimeId}: no poster or cover image available`);
+      cacheSet(cacheKey, null, 'mapping');
+      return { result: null, kitsuAnimeId, log };
+    }
+
+    const result: KitsuAnimeImages = {
+      kitsuAnimeId,
+      canonicalTitle: attrs.canonicalTitle ?? null,
+      poster,
+      posterOriginal,
+      cover,
+      coverOriginal,
+    };
+
+    cacheSet(cacheKey, result, 'mapping');
+    return { result, kitsuAnimeId, log };
+  } catch (e: any) {
+    const status = e?.response?.status;
+    log.push(`Kitsu anime ${kitsuAnimeId}: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+    return { result: null, kitsuAnimeId, log };
+  }
+}
+
 /**
  * Episode-specific thumbnail for a known Kitsu anime ID + episode number.
  * Tries thumbnail sizes largest-first, same order episode-thumb.ts used.
