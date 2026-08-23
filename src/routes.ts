@@ -1201,19 +1201,16 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T,
 
 // GET /api/episodes/thumbnail?malId=16498&ep=5[&list=1]
 //
-// Thumbnail-only combined lookup: Kitsu -> TMDB -> AniList streamingEpisodes
-// (last resort), returns whichever one hits first. Deliberately sequential,
-// not parallel -- the individual /kitsu/episode-thumb and
-// /tmdb/episode-thumb routes were always fast and reliable on their own,
-// but firing several outbound HTTPS connections at once (MAL + AniList +
-// Kitsu + TMDB simultaneously) here produced raw TLS/socket-reset errors
-// instead of clean responses, which points at Railway's container having a
-// tight limit on concurrent outbound connections rather than a slowness
-// problem. Going back to one-request-at-a-time (same as every other route
-// in this file) avoids that. Also dropped episode metadata (MAL/AniList
-// title, aired date, etc.) entirely per request -- if you need that too,
-// call /api/episodes (MAL scraper) separately; combining it back in here
-// would reintroduce the same concurrent-connection risk.
+// Single-episode version of /episodes/all -- same shape per episode (MAL
+// title/aired/filler/recap merged with the Kitsu -> TMDB -> AniList
+// thumbnail resolution), just for one episode instead of the whole show.
+// The MAL metadata lookup (getMalEpisode) and the thumbnail resolution
+// still run sequentially, not in parallel -- firing several outbound
+// HTTPS connections at once (MAL + AniList + Kitsu + TMDB simultaneously)
+// here previously produced raw TLS/socket-reset errors, which points at
+// Railway's container having a tight limit on concurrent outbound
+// connections rather than a slowness problem. One-request-at-a-time (same
+// as every other route in this file) avoids that.
 router.get('/episodes/thumbnail', async (req: Request, res: Response) => {
   const malId = parseInt(req.query.malId as string, 10);
   if (isNaN(malId)) return res.status(400).json({ error: 'malId required' });
@@ -1225,11 +1222,25 @@ router.get('/episodes/thumbnail', async (req: Request, res: Response) => {
 
   try {
     const details = await getAnimeDetails(malId).catch(() => null);
+    const malEpisode = await getMalEpisode(malId, epNum).catch(() => null);
     const { thumbnail, thumbnailSource, log } = await resolveEpisodeThumbnail(malId, epNum, details, isList);
 
     if (!thumbnail) return res.status(404).json({ error: 'No thumbnail found from any source', log });
 
-    return res.json({ data: { malId, episode: epNum, thumbnail, thumbnailSource }, log });
+    return res.json({
+      data: {
+        malId,
+        episode: epNum,
+        title: malEpisode?.title ?? null,
+        titleJapanese: malEpisode?.titleJapanese ?? null,
+        aired: malEpisode?.aired ?? null,
+        filler: malEpisode?.filler ?? null,
+        recap: malEpisode?.recap ?? null,
+        thumbnail,
+        thumbnailSource,
+      },
+      log,
+    });
   } catch (e: any) {
     return res.status(502).json({ error: 'Combined thumbnail fetch failed', detail: e?.message || String(e) });
   }
