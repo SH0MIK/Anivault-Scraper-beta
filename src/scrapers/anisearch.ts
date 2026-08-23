@@ -1,4 +1,4 @@
-import { makeClient } from '../utils/fetch';
+import axios from 'axios';
 import { cacheGet, cacheSet } from '../utils/cache';
 
 // ══════════════════════════════════════════════════════════════
@@ -8,14 +8,29 @@ import { cacheGet, cacheSet } from '../utils/cache';
 //   1. text-search their site, regex the anime ID out of the results HTML
 //   2. load the episode page, regex the og:image meta tag out
 //
-// AniSearch hasn't shown Cloudflare-challenge behavior on these two GET
-// endpoints so far (unlike Senshi, which needs FlareSolverr) -- if that
-// changes, flip `useFlareSolverr` to `true` in the makeClient() call below,
-// same way senshi.ts does.
+// Deliberately NOT using the shared makeClient() from utils/fetch.ts here --
+// that one injects X-Requested-With: XMLHttpRequest / Origin / Referer
+// headers meant for the AJAX-style streaming-site scrapers, and AniSearch
+// was returning a different (non-matching) response body with those set.
+// The site's original httpGetText() used a plain browser-navigation header
+// set with nothing AJAX-flavored, so this client mirrors that exactly.
+//
+// AniSearch hasn't shown Cloudflare-challenge behavior so far -- if that
+// changes, this would need a FlareSolverr-backed client instead (see how
+// senshi.ts sets useFlareSolverr = true on makeClient()).
 // ══════════════════════════════════════════════════════════════
 
 const BASE = 'https://www.anisearch.com';
-const http = makeClient(BASE, BASE + '/');
+
+const http = axios.create({
+  baseURL: BASE,
+  timeout: 10000,
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    'Accept': '*/*',
+    'Accept-Encoding': 'gzip, deflate',
+  },
+});
 
 export interface AniSearchEpisodeThumb {
   aniSearchId: number;
