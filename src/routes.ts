@@ -9,7 +9,7 @@ import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml } from './scrapers/mal';
-import { getSeasonNow, getTopBanners, getStreamingEpisodes } from './scrapers/anilist';
+import { getSeasonNow, getTopBanners, getStreamingEpisodes, AniListStreamingEpisode } from './scrapers/anilist';
 import { getEpisodeThumbnail as getTmdbEpisodeThumbnail, getAnimeImages as getTmdbAnimeImages, extractSeasonHint } from './scrapers/tmdb';
 import { getKitsuAnimeId, getEpisodeThumbnail as getKitsuEpisodeThumbnail, getAnimeImages as getKitsuAnimeImages } from './scrapers/kitsu';
 
@@ -899,6 +899,22 @@ router.get('/anilist/episodes', async (req: Request, res: Response) => {
   }
 });
 
+// Extracted out of resolveTmdbTitles so the combined /episodes endpoint can
+// reuse the same base-title/season-hint logic on a title list it already
+// has (from a MAL lookup it did for other reasons), without re-fetching MAL.
+function computeTmdbTitleCandidates(rawTitles: string[], log: string[]): { titles: string[]; seasonHint: number | null } {
+  let seasonHint: number | null = null;
+  const baseTitles: string[] = [];
+  for (const t of rawTitles) {
+    const { base, season } = extractSeasonHint(t);
+    if (season !== null && seasonHint === null) seasonHint = season;
+    baseTitles.push(base);
+  }
+  const titles = [...new Set([...baseTitles, ...rawTitles])];
+  log.push(`Titles to try: ${titles.join(' | ')}${seasonHint ? ` (season hint: ${seasonHint})` : ''}`);
+  return { titles, seasonHint };
+}
+
 // Shared by every /tmdb/* route: resolves the candidate title(s) to search
 // TMDB with, either from ?title= directly or from ?malId= via the MAL
 // scraper (English title first, falling back to romaji/Japanese if English
@@ -930,17 +946,7 @@ async function resolveTmdbTitles(
     ))];
   }
 
-  let seasonHint: number | null = null;
-  const baseTitles: string[] = [];
-  for (const t of rawTitles) {
-    const { base, season } = extractSeasonHint(t);
-    if (season !== null && seasonHint === null) seasonHint = season;
-    baseTitles.push(base);
-  }
-  const titles = [...new Set([...baseTitles, ...rawTitles])];
-
-  log.push(`Titles to try: ${titles.join(' | ')}${seasonHint ? ` (season hint: ${seasonHint})` : ''}`);
-  return { titles, seasonHint };
+  return computeTmdbTitleCandidates(rawTitles, log);
 }
 
 // GET /api/tmdb/episode-thumb?ep=5(&title=...|&malId=16498)[&list=1]
@@ -1082,6 +1088,195 @@ router.get('/kitsu/anime', async (req: Request, res: Response) => {
     return res.json({ data: result, log });
   } catch (e: any) {
     return res.status(502).json({ error: 'Kitsu anime-images fetch failed', detail: e?.message || String(e), log });
+  }
+});
+
+// Same "episode N" title-matching rule used elsewhere (episode-thumb.ts,
+// /anilist/episodes) for pulling a specific episode out of AniList's
+// streamingEpisodes list, which has no explicit episode-number field.
+function matchAnilistEpisode(episodes: AniListStreamingEpisode[], epNum: number): AniListStreamingEpisode | null {
+  return episodes.find((e) => {
+    const m = (e.title ?? '').match(/(?:episode|ep\.?)\s*(\d+)/i);
+    return m ? parseInt(m[1], 10) === epNum : false;
+  }) ?? null;
+}
+
+// GET /api/episodes?malId=16498(&ep=5)[&list=1]
+//
+// One-stop combined endpoint: episode metadata + thumbnail in a single
+// response, sourced from everything built in this project so far.
+//
+//   Episode metadata: MAL scraper -> AniList streamingEpisodes fallback
+//   Thumbnail:        Kitsu -> TMDB -> AniList streamingEpisodes (last resort)
+//
+// Only one thumbnail is ever returned (whichever source hit first), not
+// all three -- `thumbnailSource` in the response says which one it was.
+// Without `&ep=`, returns the full MAL episode list instead (no per-episode
+// thumbnails in that mode -- fetching 3 sources per episode across a whole
+// series would be very slow and mostly wasted, since a real page only ever
+// needs the one episode it's currently showing).
+router.get('/episodes', async (req: Request, res: Response) => {
+  const malId = parseInt(req.query.malId as string, 10);
+  if (isNaN(malId)) return res.status(400).json({ error: 'malId required' });
+
+  const hasEp = req.query.ep !== undefined;
+  const epNum = parseInt(req.query.ep as string, 10);
+  if (hasEp && isNaN(epNum)) return res.status(400).json({ error: 'Invalid ?ep=' });
+
+  const isList = req.query.list === '1';
+  const log: string[] = [];
+
+  try {
+    // ── List mode: no ?ep=, just the full MAL episode list ──────────────
+    if (!hasEp) {
+      try {
+        const episodes = await getMalEpisodes(malId).then((p) => p.data);
+        if (episodes.length > 0) return res.json({ malId, episodes, source: 'mal', log });
+        log.push('MAL: episode list empty, trying AniList');
+      } catch (e: any) {
+        log.push(`MAL episode list: request failed (${e?.message})`);
+      }
+
+      try {
+        const anilistEpisodes = await getStreamingEpisodes(malId);
+        return res.json({ malId, episodes: anilistEpisodes, source: 'anilist', log });
+      } catch (e: any) {
+        return res.status(502).json({ error: 'Episode list fetch failed on both MAL and AniList', detail: e?.message || String(e), log });
+      }
+    }
+
+    // ── Single-episode mode ──────────────────────────────────────────────
+    // 1) Episode metadata: MAL first, AniList streamingEpisodes as fallback
+    let title: string | null = null;
+    let titleJapanese: string | null = null;
+    let aired: string | null = null;
+    let filler = false;
+    let recap = false;
+    let url: string | null = null;
+    let dataSource: 'mal' | 'anilist' | null = null;
+
+    // Cache this across both the metadata fallback and the thumbnail
+    // fallback below, so a MAL miss doesn't cost two separate AniList calls.
+    let anilistEpisodesCache: AniListStreamingEpisode[] | null = null;
+
+    try {
+      const malEp = await getMalEpisode(malId, epNum);
+      if (malEp) {
+        title = malEp.title;
+        titleJapanese = malEp.titleJapanese;
+        aired = malEp.aired;
+        filler = malEp.filler;
+        recap = malEp.recap;
+        url = malEp.url;
+        dataSource = 'mal';
+        log.push(`Episode data: found on MAL`);
+      } else {
+        log.push('Episode data: not found on MAL, trying AniList');
+      }
+    } catch (e: any) {
+      log.push(`Episode data: MAL lookup failed (${e?.message}), trying AniList`);
+    }
+
+    if (!dataSource) {
+      try {
+        anilistEpisodesCache = await getStreamingEpisodes(malId);
+        const match = matchAnilistEpisode(anilistEpisodesCache, epNum);
+        if (match) {
+          title = match.title;
+          url = match.url;
+          dataSource = 'anilist';
+          log.push('Episode data: found on AniList streamingEpisodes');
+        } else {
+          log.push('Episode data: not found on AniList either');
+        }
+      } catch (e: any) {
+        log.push(`Episode data: AniList lookup failed (${e?.message})`);
+      }
+    }
+
+    // 2) Thumbnail: Kitsu -> TMDB -> AniList streamingEpisodes (last resort)
+    let thumbnail: string | null = null;
+    let thumbnailSource: 'kitsu' | 'tmdb' | 'anilist' | null = null;
+
+    // MAL title needed for Kitsu's title-search fallback and for TMDB's
+    // search entirely -- fetch once, reused by both.
+    const details = await getAnimeDetails(malId);
+    const primaryTitle = details ? (details.titleEnglish || details.title) : null;
+
+    try {
+      const kitsuAnimeId = await getKitsuAnimeId(malId, primaryTitle, log);
+      if (kitsuAnimeId) {
+        const { result } = await getKitsuEpisodeThumbnail(kitsuAnimeId, epNum, isList);
+        if (result) {
+          thumbnail = result.thumbnail;
+          thumbnailSource = 'kitsu';
+          log.push('Thumbnail: found via Kitsu');
+        } else {
+          log.push('Thumbnail: not found on Kitsu, trying TMDB');
+        }
+      } else {
+        log.push('Thumbnail: no Kitsu anime match, trying TMDB');
+      }
+    } catch (e: any) {
+      log.push(`Thumbnail: Kitsu lookup failed (${e?.message}), trying TMDB`);
+    }
+
+    if (!thumbnail && details) {
+      const rawTitles = [...new Set([details.titleEnglish, details.title, details.titleJapanese].filter(
+        (t): t is string => !!t
+      ))];
+      const { titles, seasonHint } = computeTmdbTitleCandidates(rawTitles, log);
+
+      for (const t of titles) {
+        const { result, log: srcLog } = await getTmdbEpisodeThumbnail(t, epNum, seasonHint, isList);
+        log.push(...srcLog);
+        if (result) {
+          thumbnail = result.thumbnail;
+          thumbnailSource = 'tmdb';
+          break;
+        }
+      }
+      if (!thumbnail) log.push('Thumbnail: not found on TMDB, trying AniList');
+    }
+
+    if (!thumbnail) {
+      try {
+        if (!anilistEpisodesCache) anilistEpisodesCache = await getStreamingEpisodes(malId);
+        const match = matchAnilistEpisode(anilistEpisodesCache, epNum);
+        if (match?.thumbnail) {
+          thumbnail = match.thumbnail;
+          thumbnailSource = 'anilist';
+          log.push('Thumbnail: found via AniList streamingEpisodes');
+        } else {
+          log.push('Thumbnail: not found on AniList either — no source had this episode\'s thumbnail');
+        }
+      } catch (e: any) {
+        log.push(`Thumbnail: AniList lookup failed (${e?.message})`);
+      }
+    }
+
+    if (!dataSource && !thumbnail) {
+      return res.status(404).json({ error: 'No episode data or thumbnail found from any source', log });
+    }
+
+    return res.json({
+      data: {
+        malId,
+        episode: epNum,
+        title,
+        titleJapanese,
+        aired,
+        filler,
+        recap,
+        url,
+        dataSource,
+        thumbnail,
+        thumbnailSource,
+      },
+      log,
+    });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'Combined episode fetch failed', detail: e?.message || String(e), log });
   }
 });
 
