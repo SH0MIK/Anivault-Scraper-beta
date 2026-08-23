@@ -121,27 +121,51 @@ export async function searchAnikoto(query: string): Promise<AnikotoSearchResult[
   const cached = cacheGet<AnikotoSearchResult[]>(cacheKey);
   if (cached) return cached;
 
-  const res = await http.get('/filter', { params: { keyword: query } });
-  const $ = cheerio.load(res.data);
+  // NOTE: /filter?keyword= is NOT a real search — /filter is the genre/year
+  // browse page, and it silently ignores an unrecognized `keyword` param,
+  // returning the generic "browse everything" listing instead of an error.
+  // That meant every query here used to return the same unrelated batch of
+  // anime (whatever's currently airing/browsable), and scoreTitle() would
+  // still pick a "best" match out of that irrelevant batch — producing a
+  // confidently wrong slug instead of failing loudly.
+  // The actual search is this AJAX endpoint (used by the site's own
+  // quick-search box), returning JSON: { result: { html: "<a href=...>" } }.
+  let html = '';
+  try {
+    const res = await ajax.get('/ajax/anime/search', { params: { keyword: query } });
+    html = res.data?.result?.html ?? res.data?.result ?? (typeof res.data === 'string' ? res.data : '');
+  } catch (err) {
+    log('searchAnikoto: /ajax/anime/search threw', { query, ...errInfo(err) });
+    cacheSet(cacheKey, [], 'episodes');
+    return [];
+  }
+
+  const $ = cheerio.load(html);
   const results: AnikotoSearchResult[] = [];
 
-  $('.items.flw-wrap .film_list-wrap .flw-item, .film_list-wrap .flw-item, .ani.items .item, section .items .item').each(
-    (_, el) => {
-      const $el = $(el);
-      const href = $el.attr('href') ?? $el.find('a').first().attr('href') ?? '';
-      const slug = href
-        .replace(/^https?:\/\/[^/]+/, '')
-        .replace(/^\/watch\//, '')
-        .replace(/\/ep-\d+$/, '')
-        .replace(/\/$/, '');
-      const title = $el.find('.name, .d-title').first().text().trim();
-      if (!slug || !title) return;
-      results.push({ slug, title });
-    }
-  );
+  $('a[href*="/watch/"]').each((_, el) => {
+    const $el = $(el);
+    const href = $el.attr('href') ?? '';
+    const slug = href
+      .replace(/^https?:\/\/[^/]+/, '')
+      .replace(/^\/watch\//, '')
+      .replace(/\/ep-\d+$/, '')
+      .replace(/\/$/, '');
+    const title =
+      $el.find('.film-name, .dynamic-name, .d-title, .name').first().text().trim() ||
+      $el.attr('title')?.trim() ||
+      $el.text().trim();
+    if (!slug || !title) return;
+    results.push({ slug, title });
+  });
 
-  cacheSet(cacheKey, results, 'episodes');
-  return results;
+  const unique = Array.from(new Map(results.map((r) => [r.slug, r])).values());
+  if (unique.length === 0) {
+    log('searchAnikoto: no parseable results from /ajax/anime/search', { query, htmlSnippet: html.slice(0, 300) });
+  }
+
+  cacheSet(cacheKey, unique, 'episodes');
+  return unique;
 }
 
 export async function findAnikotoSlug(title: string): Promise<string | null> {
@@ -173,8 +197,26 @@ export async function findAnikotoSlug(title: string): Promise<string | null> {
 
   const unique = Array.from(new Map(allResults.map((result) => [result.slug, result])).values());
   if (!unique.length) return null;
-  return unique.map((result) => ({ result, score: scoreTitle(title, result.title) })).sort((a, b) => b.score - a.score)[0]
-    .result.slug;
+
+  const best = unique
+    .map((result) => ({ result, score: scoreTitle(title, result.title) }))
+    .sort((a, b) => b.score - a.score)[0];
+
+  // Below this, `best` is just "the least-bad option in an irrelevant batch",
+  // not an actual match — returning it silently used to point episode data
+  // at a completely unrelated anime instead of surfacing "not found".
+  const MIN_MATCH_SCORE = 50;
+  if (best.score < MIN_MATCH_SCORE) {
+    log('findAnikotoSlug: best candidate scored too low, treating as no match', {
+      title,
+      bestTitle: best.result.title,
+      bestSlug: best.result.slug,
+      score: best.score,
+    });
+    return null;
+  }
+
+  return best.result.slug;
 }
 
 // ══════════════════════════════════════════════════════════════
