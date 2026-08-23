@@ -104,13 +104,52 @@ function normalizeTitle(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+function significantWords(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 2);
+}
+
+// Ported from animeheaven.ts's scoreTitle, which already had this fix — this
+// copy didn't. Without the length-ratio/direction guard, a short base-
+// franchise title (e.g. "Bleach") scores an unconditional 80 against ANY
+// longer query that happens to start with it (e.g. "Bleach: Sennen Kessen-hen
+// - Kashin-tan"), since needle.startsWith(hay) alone used to be enough. That
+// silently resolved every sequel/season/movie query to the franchise's base
+// entry instead of the specific one — see the Bleach: Thousand-Year Blood War
+// - The Calamity report, which matched the plain 366-episode "Bleach" slug.
 function scoreTitle(query: string, title: string): number {
   const needle = normalizeTitle(query);
   const hay = normalizeTitle(title);
   if (!needle || !hay) return 0;
   if (hay === needle) return 100;
-  if (hay.startsWith(needle) || needle.startsWith(hay)) return 80;
-  if (hay.includes(needle) || needle.includes(hay)) return 60;
+
+  // Length ratio guards against a short/truncated candidate getting high
+  // confidence against a much longer query just because one is a prefix of
+  // the other.
+  const ratio = Math.min(needle.length, hay.length) / Math.max(needle.length, hay.length);
+
+  // Direction matters too: if the QUERY is the longer string and the
+  // candidate is only a prefix/substring of it, the candidate is likely the
+  // generic franchise/series entry missing a distinguishing season/subtitle
+  // — i.e. probably the wrong one. If the CANDIDATE is the longer string,
+  // the extra text is usually just a season/part suffix on the full query,
+  // which is fine and shouldn't be penalized.
+  const queryIsLonger = needle.length > hay.length;
+  const missingWords = queryIsLonger
+    ? significantWords(query).length - significantWords(title).length
+    : 0;
+
+  if (hay.startsWith(needle) || needle.startsWith(hay)) {
+    if (queryIsLonger && missingWords >= 2) return Math.floor(ratio * 30);
+    return ratio >= 0.6 ? 80 : Math.floor(ratio * 60);
+  }
+  if (hay.includes(needle) || needle.includes(hay)) {
+    if (queryIsLonger && missingWords >= 2) return Math.floor(ratio * 25);
+    return ratio >= 0.6 ? 60 : Math.floor(ratio * 45);
+  }
   let matches = 0;
   for (const ch of needle) if (hay.includes(ch)) matches++;
   return Math.floor((matches / Math.max(needle.length, 1)) * 40);
