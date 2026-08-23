@@ -62,10 +62,30 @@ export async function getAniSearchId(animeTitle: string, log: string[]): Promise
     const body: string = res.data ?? '';
     const idMatch = body.match(/\/anime\/(\d+)[,/]/);
     aniSearchId = idMatch ? parseInt(idMatch[1], 10) : null;
-    log.push(`AniSearch: ${aniSearchId ? `found anime ID ${aniSearchId}` : 'anime not found'}`);
+
+    if (!aniSearchId) {
+      // Diagnostics: if the request "succeeded" (200) but found nothing,
+      // it's very likely a Cloudflare challenge page rather than a real
+      // empty-results page -- CF frequently returns 200 with a JS
+      // challenge instead of a 403. This flags that case explicitly
+      // instead of silently logging "anime not found" for what's actually
+      // a block.
+      const isLikelyChallenge = /just a moment|cf-browser-verification|cf_chl_|challenge-platform|attention required/i.test(body);
+      log.push(
+        `AniSearch: anime not found (HTTP ${res.status}, body ${body.length} bytes` +
+        `${isLikelyChallenge ? ', looks like a Cloudflare challenge page — likely IP-blocked, same as Senshi' : ''})`
+      );
+    } else {
+      log.push(`AniSearch: found anime ID ${aniSearchId}`);
+    }
   } catch (e: any) {
     const status = e?.response?.status;
-    log.push(`AniSearch search: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+    const body: string = e?.response?.data ?? '';
+    const isLikelyChallenge = /just a moment|cf-browser-verification|cf_chl_|challenge-platform|attention required/i.test(body);
+    log.push(
+      `AniSearch search: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}` +
+      `${isLikelyChallenge ? ' — looks like a Cloudflare challenge page, likely IP-blocked' : ''}`
+    );
   }
 
   cacheSet(cacheKey, aniSearchId, 'mapping');
