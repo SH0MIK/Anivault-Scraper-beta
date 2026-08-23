@@ -1106,7 +1106,7 @@ function matchAnilistEpisode(episodes: AniListStreamingEpisode[], epNum: number)
 }
 
 // Shared by /episodes/thumbnail (single ep) and /episodes/all (every ep):
-// Kitsu -> TMDB -> AniList streamingEpisodes (last resort), returns
+// TMDB -> Kitsu -> AniList streamingEpisodes (last resort), returns
 // whichever one hits first. `anilistEpisodes`, when passed in, is reused
 // instead of re-fetched -- callers looping over every episode of a show
 // fetch AniList's streamingEpisodes list ONCE up front and pass it into
@@ -1125,27 +1125,8 @@ async function resolveEpisodeThumbnail(
   let thumbnail: string | null = null;
   let thumbnailSource: 'kitsu' | 'tmdb' | 'anilist' | null = null;
 
-  // 1) Kitsu
-  try {
-    const kitsuAnimeId = await getKitsuAnimeId(malId, primaryTitle, log);
-    if (kitsuAnimeId) {
-      const { result } = await getKitsuEpisodeThumbnail(kitsuAnimeId, epNum, isList);
-      if (result) {
-        thumbnail = result.thumbnail;
-        thumbnailSource = 'kitsu';
-        log.push('Thumbnail: found via Kitsu');
-      } else {
-        log.push('Thumbnail: not found on Kitsu, trying TMDB');
-      }
-    } else {
-      log.push('Thumbnail: no Kitsu anime match, trying TMDB');
-    }
-  } catch (e: any) {
-    log.push(`Thumbnail: Kitsu lookup failed (${e?.message}), trying TMDB`);
-  }
-
-  // 2) TMDB
-  if (!thumbnail && details) {
+  // 1) TMDB
+  if (details) {
     const rawTitles = [...new Set([details.titleEnglish, details.title, details.titleJapanese].filter(
       (t): t is string => !!t
     ))];
@@ -1160,7 +1141,30 @@ async function resolveEpisodeThumbnail(
         break;
       }
     }
-    if (!thumbnail) log.push('Thumbnail: not found on TMDB, trying AniList');
+    if (!thumbnail) log.push('Thumbnail: not found on TMDB, trying Kitsu');
+  } else {
+    log.push('Thumbnail: no anime details, skipping TMDB, trying Kitsu');
+  }
+
+  // 2) Kitsu
+  if (!thumbnail) {
+    try {
+      const kitsuAnimeId = await getKitsuAnimeId(malId, primaryTitle, log);
+      if (kitsuAnimeId) {
+        const { result } = await getKitsuEpisodeThumbnail(kitsuAnimeId, epNum, isList);
+        if (result) {
+          thumbnail = result.thumbnail;
+          thumbnailSource = 'kitsu';
+          log.push('Thumbnail: found via Kitsu');
+        } else {
+          log.push('Thumbnail: not found on Kitsu, trying AniList');
+        }
+      } else {
+        log.push('Thumbnail: no Kitsu anime match, trying AniList');
+      }
+    } catch (e: any) {
+      log.push(`Thumbnail: Kitsu lookup failed (${e?.message}), trying AniList`);
+    }
   }
 
   // 3) AniList streamingEpisodes (last resort)
