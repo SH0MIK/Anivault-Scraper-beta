@@ -12,7 +12,6 @@ import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpi
 import { getSeasonNow, getTopBanners, getStreamingEpisodes } from './scrapers/anilist';
 import { getEpisodeThumbnail as getTmdbEpisodeThumbnail, getAnimeImages as getTmdbAnimeImages, extractSeasonHint } from './scrapers/tmdb';
 import { getKitsuAnimeId, getEpisodeThumbnail as getKitsuEpisodeThumbnail, getAnimeImages as getKitsuAnimeImages } from './scrapers/kitsu';
-import { getAniSearchId, getEpisodeThumbnail as getAniSearchEpisodeThumbnail } from './scrapers/anisearch';
 
 const router = Router();
 
@@ -1083,44 +1082,6 @@ router.get('/kitsu/anime', async (req: Request, res: Response) => {
     return res.json({ data: result, log });
   } catch (e: any) {
     return res.status(502).json({ error: 'Kitsu anime-images fetch failed', detail: e?.message || String(e), log });
-  }
-});
-
-// GET /api/anisearch/episode-thumb?ep=5(&title=...|&malId=16498)[&list=1]
-// Ported from the site's episode-thumb.ts "Source 5: AniSearch scrape"
-// block. AniSearch has no MAL-mapping endpoint (unlike Kitsu), so a malId
-// is always resolved to a title first, then AniSearch is searched by that
-// title directly. `list=1` skips the cache.
-router.get('/anisearch/episode-thumb', async (req: Request, res: Response) => {
-  const epNum = parseInt(req.query.ep as string, 10);
-  if (isNaN(epNum)) return res.status(400).json({ error: 'Missing/invalid ?ep=' });
-
-  const rawTitle = req.query.title as string | undefined;
-  const malId = parseInt(req.query.malId as string, 10);
-  if (!rawTitle && isNaN(malId)) return res.status(400).json({ error: 'Provide ?title= or ?malId=' });
-
-  const isList = req.query.list === '1';
-  const log: string[] = [];
-
-  try {
-    let title = rawTitle ?? null;
-    if (!title) {
-      const details = await getAnimeDetails(malId);
-      if (!details) return res.status(404).json({ error: `MAL ID ${malId} not found`, log });
-      title = details.titleEnglish || details.title;
-      log.push(`Resolved MAL ID ${malId} -> title '${title}' (AniSearch has no MAL-mapping endpoint, title search only)`);
-    }
-
-    const aniSearchId = await getAniSearchId(title, log);
-    if (!aniSearchId) return res.status(404).json({ error: 'No AniSearch anime match found', log });
-
-    const { result, log: srcLog } = await getAniSearchEpisodeThumbnail(aniSearchId, epNum, isList);
-    log.push(...srcLog);
-    if (!result) return res.status(404).json({ error: 'No AniSearch episode thumbnail found', log });
-
-    return res.json({ data: result, log });
-  } catch (e: any) {
-    return res.status(502).json({ error: 'AniSearch episode-thumb fetch failed', detail: e?.message || String(e), log });
   }
 });
 
