@@ -113,6 +113,13 @@ function pickBestImage(arr: any[], mode: 'lang-first' | 'textless-first' = 'lang
   return byVotes.find((i) => i.iso_639_1 === 'en') || byVotes.find((i) => !i.iso_639_1) || byVotes[0];
 }
 
+// TMDB search/tv genre_id for "Animation". Used below to disambiguate shows
+// that share a title with a non-anime entry (e.g. "One Piece" the anime vs.
+// Netflix's 2023 live-action "One Piece" -- both come back from the same
+// search query, and TMDB's own relevance ranking doesn't reliably put the
+// anime first).
+const ANIMATION_GENRE_ID = 16;
+
 async function searchShow(animeTitle: string, log: string[]): Promise<{ id: number; name: string } | null> {
   const srch = await tmdbClient.get('/search/tv', {
     params: { api_key: TMDB_API_KEY, query: animeTitle, language: 'en-US' },
@@ -122,7 +129,25 @@ async function searchShow(animeTitle: string, log: string[]): Promise<{ id: numb
     log.push(`TMDB: no show found for '${animeTitle}'`);
     return null;
   }
-  const show = results[0];
+
+  // Prefer a result that's actually animated AND Japanese-origin -- catches
+  // cases like "One Piece" where a live-action adaptation of the same name
+  // (different genre, different origin_country) outranks the anime in
+  // TMDB's default search order. Falls back through progressively looser
+  // criteria, then finally to whatever TMDB ranked first, so this never
+  // returns nothing just because a match couldn't be scored.
+  const isAnimated = (r: any) => Array.isArray(r.genre_ids) && r.genre_ids.includes(ANIMATION_GENRE_ID);
+  const isJapanese = (r: any) => r.original_language === 'ja' || (Array.isArray(r.origin_country) && r.origin_country.includes('JP'));
+
+  const show =
+    results.find((r: any) => isAnimated(r) && isJapanese(r)) ||
+    results.find((r: any) => isAnimated(r)) ||
+    results.find((r: any) => isJapanese(r)) ||
+    results[0];
+
+  if (show !== results[0]) {
+    log.push(`TMDB: '${results[0].name}' (ID ${results[0].id}) ranked first but isn't anime -- picked '${show.name}' (ID ${show.id}) instead`);
+  }
   log.push(`TMDB: matched '${animeTitle}' -> '${show.name}' (ID ${show.id})`);
   return { id: show.id, name: show.name };
 }
