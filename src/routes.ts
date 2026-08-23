@@ -153,6 +153,10 @@ router.get('/info', async (req: Request, res: Response) => {
   }
 });
 
+// Streaming-source episode list (senshi/animeheaven/miruro/anikoto episode
+// IDs, used by /servers and /watch to locate a playable episode). Not to be
+// confused with the singular /episode route further down, which is the
+// MAL-metadata + thumbnail combined lookup.
 router.get('/episodes', async (req: Request, res: Response) => {
   const { anilistId, malId, source = 'senshi', heavenId } = req.query;
   if (!anilistId && !malId && !(source === 'animeheaven' && heavenId)) return res.status(400).json({ error: 'Provide ?anilistId= or ?malId=, or ?heavenId= for AnimeHeaven' });
@@ -1199,84 +1203,67 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T,
   return results;
 }
 
-// GET /api/episodes/thumbnail?malId=16498&ep=5[&list=1]
+// GET /api/episode?malId=23283[&concurrency=5][&list=1]                -- all episodes
+// GET /api/episode?malId=23283&ep=5[&list=1]                           -- one episode
 //
-// Single-episode version of /episodes/all -- same shape per episode (MAL
-// title/aired/filler/recap merged with the Kitsu -> TMDB -> AniList
-// thumbnail resolution), just for one episode instead of the whole show.
-// The MAL metadata lookup (getMalEpisode) and the thumbnail resolution
-// still run sequentially, not in parallel -- firing several outbound
-// HTTPS connections at once (MAL + AniList + Kitsu + TMDB simultaneously)
-// here previously produced raw TLS/socket-reset errors, which points at
-// Railway's container having a tight limit on concurrent outbound
-// connections rather than a slowness problem. One-request-at-a-time (same
-// as every other route in this file) avoids that.
-router.get('/episodes/thumbnail', async (req: Request, res: Response) => {
+// MAL-metadata + thumbnail combined lookup (distinct from the plural
+// /episodes route above, which is the streaming-source episode ID list used
+// for playback). Presence of ?ep= picks single-episode vs. whole-show mode;
+// same response shape either way (title/aired/filler/recap + thumbnail
+// resolved via Kitsu -> TMDB -> AniList), just wrapped in `episodes: []`
+// instead of `data: {}` for the whole-show case.
+//
+// Thumbnail resolution is the slow part (each one is its own Kitsu/TMDB/
+// AniList round trip). Single-episode mode runs it once, sequentially --
+// firing several outbound HTTPS connections at once (MAL + AniList + Kitsu
+// + TMDB simultaneously) here previously produced raw TLS/socket-reset
+// errors, which points at Railway's container having a tight limit on
+// concurrent outbound connections rather than a slowness problem.
+// Whole-show mode runs it with bounded concurrency (?concurrency=, default
+// 5, capped at 10) instead -- fully sequential would be too slow for
+// long-running shows, fully parallel hits the same socket-reset problem.
+// AniList's streamingEpisodes list is fetched once up front and shared
+// across every episode's fallback lookup either way.
+router.get('/episode', async (req: Request, res: Response) => {
   const malId = parseInt(req.query.malId as string, 10);
   if (isNaN(malId)) return res.status(400).json({ error: 'malId required' });
 
-  const epNum = parseInt(req.query.ep as string, 10);
-  if (isNaN(epNum)) return res.status(400).json({ error: 'ep required' });
-
   const isList = req.query.list === '1';
+  const hasEp = req.query.ep !== undefined;
+  const epNum = parseInt(req.query.ep as string, 10);
+  if (hasEp && isNaN(epNum)) return res.status(400).json({ error: '?ep must be a number' });
 
   try {
     const details = await getAnimeDetails(malId).catch(() => null);
-    const malEpisode = await getMalEpisode(malId, epNum).catch(() => null);
-    const { thumbnail, thumbnailSource, log } = await resolveEpisodeThumbnail(malId, epNum, details, isList);
 
-    if (!thumbnail) return res.status(404).json({ error: 'No thumbnail found from any source', log });
+    // Single episode
+    if (hasEp) {
+      const malEpisode = await getMalEpisode(malId, epNum).catch(() => null);
+      const { thumbnail, thumbnailSource, log } = await resolveEpisodeThumbnail(malId, epNum, details, isList);
 
-    return res.json({
-      data: {
-        malId,
-        episode: epNum,
-        title: malEpisode?.title ?? null,
-        titleJapanese: malEpisode?.titleJapanese ?? null,
-        aired: malEpisode?.aired ?? null,
-        filler: malEpisode?.filler ?? null,
-        recap: malEpisode?.recap ?? null,
-        thumbnail,
-        thumbnailSource,
-      },
-      log,
+      if (!thumbnail) return res.status(404).json({ error: 'No thumbnail found from any source', log });
+
+      return res.json({
+        data: {
+          malId,
+          episode: epNum,
+          title: malEpisode?.title ?? null,
+          titleJapanese: malEpisode?.titleJapanese ?? null,
+          aired: malEpisode?.aired ?? null,
+          filler: malEpisode?.filler ?? null,
+          recap: malEpisode?.recap ?? null,
+          thumbnail,
+          thumbnailSource,
+        },
+        log,
+      });
+    }
+
+    // Whole show
+    const concurrency = Math.min(Math.max(parseInt(req.query.concurrency as string, 10) || 5, 1), 10);
+    const malEpisodes = await getAllMalEpisodes(malId).catch((e: any) => {
+      throw new Error(`MAL episode list fetch failed: ${e?.message || e}`);
     });
-  } catch (e: any) {
-    return res.status(502).json({ error: 'Combined thumbnail fetch failed', detail: e?.message || String(e) });
-  }
-});
-
-// GET /api/episodes/all?malId=23283[&concurrency=5][&list=1]
-//
-// Direct "give me every episode" route -- MAL episode metadata (title,
-// aired date, filler/recap flags) merged with the same Kitsu -> TMDB ->
-// AniList thumbnail resolution /episodes/thumbnail uses, but for the whole
-// show in one call instead of one request per episode number.
-//
-// MAL metadata is fetched once via getAllMalEpisodes (pages through MAL's
-// 100-per-page episode list internally). Thumbnail resolution per episode
-// is the slow part (each one is its own Kitsu/TMDB/AniList round trip), so
-// those run with bounded concurrency (?concurrency=, default 5, capped at
-// 10) rather than either fully sequential (too slow for long-running shows)
-// or fully parallel (the socket-reset problem noted on /episodes/thumbnail
-// above). AniList's streamingEpisodes list is fetched once up front and
-// shared across every episode's fallback lookup instead of once per
-// episode.
-router.get('/episodes/all', async (req: Request, res: Response) => {
-  const malId = parseInt(req.query.malId as string, 10);
-  if (isNaN(malId)) return res.status(400).json({ error: 'malId required' });
-
-  const isList = req.query.list === '1';
-  const concurrency = Math.min(Math.max(parseInt(req.query.concurrency as string, 10) || 5, 1), 10);
-
-  try {
-    const [details, malEpisodes] = await Promise.all([
-      getAnimeDetails(malId).catch(() => null),
-      getAllMalEpisodes(malId).catch((e: any) => {
-        throw new Error(`MAL episode list fetch failed: ${e?.message || e}`);
-      }),
-    ]);
-
     if (!malEpisodes.length) return res.status(404).json({ error: 'No episodes found on MAL for this malId' });
 
     const anilistEpisodes = await getStreamingEpisodes(malId).catch(() => [] as AniListStreamingEpisode[]);
@@ -1302,7 +1289,7 @@ router.get('/episodes/all', async (req: Request, res: Response) => {
       episodes,
     });
   } catch (e: any) {
-    return res.status(502).json({ error: 'Combined episode list fetch failed', detail: e?.message || String(e) });
+    return res.status(502).json({ error: 'Combined episode fetch failed', detail: e?.message || String(e) });
   }
 });
 
