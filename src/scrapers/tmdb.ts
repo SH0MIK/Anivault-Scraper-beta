@@ -261,13 +261,73 @@ export async function getAnimeImages(
   }
 }
 
+// ── Absolute episode -> TMDB (season, in-season episode) mapping ────────
+// Long-running shonen (Naruto Shippuden, One Piece, Bleach, etc.) air as one
+// continuous series on MAL/Jikan -- episode 1, 2, 3... straight through to
+// the finale -- but TMDB models the same show as many separate seasons,
+// each restarting its own numbering from episode 1. Naruto Shippuden alone
+// is ~21 TMDB seasons. Without converting between the two, "episode 54"
+// only ever means "season X, episode 54", which stops existing once every
+// season TMDB has is shorter than 54 episodes.
+interface TmdbSeasonInfo {
+  season_number: number;
+  episode_count: number;
+}
+
+async function getShowSeasons(showId: number, log: string[]): Promise<TmdbSeasonInfo[]> {
+  const cacheKey = `tmdb:seasons:${showId}`;
+  const cached = cacheGet<TmdbSeasonInfo[]>(cacheKey);
+  if (cached) return cached;
+
+  const res = await tmdbClient.get(`/tv/${showId}`, { params: { api_key: TMDB_API_KEY } });
+  const seasons: TmdbSeasonInfo[] = (res.data?.seasons ?? [])
+    .filter((s: any) => s.season_number > 0) // skip "Specials" (season 0) -- not part of the absolute count
+    .map((s: any) => ({ season_number: s.season_number, episode_count: s.episode_count ?? 0 }))
+    .sort((a: TmdbSeasonInfo, b: TmdbSeasonInfo) => a.season_number - b.season_number);
+
+  cacheSet(cacheKey, seasons, 'mapping'); // 24h TTL -- a show's season structure essentially never changes
+  log.push(`TMDB: '${showId}' has ${seasons.length} season(s) -- ${seasons.map((s) => `S${s.season_number}:${s.episode_count}`).join(', ')}`);
+  return seasons;
+}
+
+/**
+ * Walks the season list in order, subtracting each season's episode_count
+ * from the absolute episode number until it lands inside one -- e.g. with
+ * seasons [S1:32, S2:33, S3:18, ...] and absoluteEp=54: 54-32=22, 22<=33,
+ * so that's season 2, episode 22. Returns null if absoluteEp is past every
+ * season TMDB currently lists (e.g. a show that's still airing and TMDB
+ * hasn't added the newest season yet).
+ */
+function mapAbsoluteEpisode(seasons: TmdbSeasonInfo[], absoluteEp: number): { season: number; epInSeason: number } | null {
+  let remaining = absoluteEp;
+  for (const s of seasons) {
+    if (s.episode_count <= 0) continue;
+    if (remaining <= s.episode_count) {
+      return { season: s.season_number, epInSeason: remaining };
+    }
+    remaining -= s.episode_count;
+  }
+  return null;
+}
+
 /**
  * Looks up an episode-specific still from TMDB by anime title + episode number.
  *
- * `seasonHint` (see getAnimeImages) is tried first if given, then season 1,
- * then season 2, deduped -- instead of blindly always trying 1 then 2, which
- * broke once a title carried a season marker the base-title search couldn't
- * see through anyway.
+ * `epNum` here is the ABSOLUTE episode number (MAL/Jikan-style -- counts
+ * straight through 1..N across the whole series), but TMDB splits
+ * long-running shows into many seasons, each restarting its own episode
+ * numbering from 1 (Naruto Shippuden is ~21 TMDB seasons; One Piece is 20+).
+ * So this first fetches the show's season list and walks it to figure out
+ * which (season, in-season episode) absoluteEp actually falls under, before
+ * ever hitting the per-episode endpoint -- trying `epNum` directly against
+ * "season 1" / "season 2" (the old behavior) only ever worked for episodes
+ * within whichever of those two seasons happened to be long enough, and
+ * silently returned nothing for everything past that.
+ *
+ * `seasonHint` (title-derived, e.g. "Show II" -> season 2) and a bare
+ * season-1/2 attempt at the raw epNum are still tried afterward as
+ * fallbacks, in case the season list fetch fails or a show's numbering
+ * doesn't line up with its season structure for some other reason.
  */
 export async function getEpisodeThumbnail(
   animeTitle: string,
@@ -299,15 +359,37 @@ export async function getEpisodeThumbnail(
     }
     const showId = show.id;
 
-    const seasonsToTry = [...new Set([seasonHint, 1, 2].filter((s): s is number => !!s && s > 0))];
+    // Build (season, in-season episode) candidates to try, in priority order.
+    const candidates: Array<{ season: number; epInSeason: number }> = [];
 
-    for (const season of seasonsToTry) {
+    try {
+      const seasons = await getShowSeasons(showId, log);
+      const mapped = mapAbsoluteEpisode(seasons, epNum);
+      if (mapped) {
+        log.push(`TMDB: absolute ep ${epNum} -> season ${mapped.season} ep ${mapped.epInSeason}`);
+        candidates.push(mapped);
+      } else {
+        log.push(`TMDB: absolute ep ${epNum} is beyond every season TMDB lists for '${show.name}'`);
+      }
+    } catch (e: any) {
+      log.push(`TMDB: couldn't fetch season list for '${show.name}' (${e?.message})`);
+    }
+
+    // Fallbacks: seasonHint and season 1/2, tried against the raw epNum --
+    // covers shows without a clean season-list mapping (or where it's wrong).
+    for (const season of [seasonHint, 1, 2]) {
+      if (!season || season <= 0) continue;
+      if (candidates.some((c) => c.season === season && c.epInSeason === epNum)) continue;
+      candidates.push({ season, epInSeason: epNum });
+    }
+
+    for (const { season, epInSeason } of candidates) {
       try {
-        const epRes = await tmdbClient.get(`/tv/${showId}/season/${season}/episode/${epNum}`, {
+        const epRes = await tmdbClient.get(`/tv/${showId}/season/${season}/episode/${epInSeason}`, {
           params: { api_key: TMDB_API_KEY },
         });
         const still: string | null = epRes.data?.still_path ?? null;
-        log.push(`TMDB ${show.name} s${season}e${epNum}: ${still ? `found ${still}` : 'no still'}`);
+        log.push(`TMDB ${show.name} s${season}e${epInSeason}: ${still ? `found ${still}` : 'no still'}`);
 
         if (still) {
           const result: TmdbEpisodeThumb = {
@@ -324,11 +406,11 @@ export async function getEpisodeThumbnail(
       } catch (e: any) {
         // 404 just means that season/episode doesn't exist for this show — keep trying
         const status = e?.response?.status;
-        log.push(`TMDB s${season}e${epNum}: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+        log.push(`TMDB s${season}e${epInSeason}: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
       }
     }
 
-    log.push(`TMDB: no still found for '${animeTitle}' ep ${epNum} in seasons tried (${seasonsToTry.join(', ')})`);
+    log.push(`TMDB: no still found for '${animeTitle}' ep ${epNum} (tried ${candidates.map((c) => `s${c.season}e${c.epInSeason}`).join(', ')})`);
     cacheSet(cacheKey, null, 'episodes');
     return { result: null, log };
   } catch (e: any) {
