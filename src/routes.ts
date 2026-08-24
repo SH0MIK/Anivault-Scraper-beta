@@ -9,7 +9,7 @@ import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers
 import { getMiruroEpisodes, getMiruroServers, getMiruroEmbedUrl } from './scrapers/miruro';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getAllEpisodes as getAllMalEpisodes, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml } from './scrapers/mal';
-import { getSeasonNow, getTopBanners, getStreamingEpisodes, AniListStreamingEpisode } from './scrapers/anilist';
+import { getSeasonNow, getTopBanners, getStreamingEpisodes, AniListStreamingEpisode, getAnimeImages as getAnilistAnimeImages } from './scrapers/anilist';
 import { getEpisodeThumbnail as getTmdbEpisodeThumbnail, getAnimeImages as getTmdbAnimeImages, extractSeasonHint } from './scrapers/tmdb';
 import { getKitsuAnimeId, getEpisodeThumbnail as getKitsuEpisodeThumbnail, getAnimeImages as getKitsuAnimeImages } from './scrapers/kitsu';
 
@@ -903,6 +903,26 @@ router.get('/anilist/episodes', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/anilist/anime?malId=21[&list=1]
+// Poster + cover (banner) art from AniList — same shape as /tmdb/anime and
+// /kitsu/anime, so all three can be used interchangeably. AniList maps
+// straight off the MAL ID (no title search needed), same as
+// /anilist/episodes above.
+router.get('/anilist/anime', async (req: Request, res: Response) => {
+  const malId = parseInt(req.query.malId as string, 10);
+  if (isNaN(malId)) return res.status(400).json({ error: 'malId required' });
+
+  const isList = req.query.list === '1';
+
+  try {
+    const { result, log } = await getAnilistAnimeImages(malId, isList);
+    if (!result) return res.status(404).json({ error: 'No AniList images found', log });
+    return res.json({ data: result, log });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'AniList anime-images fetch failed', detail: aniListErrorDetail(e) });
+  }
+});
+
 // Extracted out of resolveTmdbTitles so the combined /episodes endpoint can
 // reuse the same base-title/season-hint logic on a title list it already
 // has (from a MAL lookup it did for other reasons), without re-fetching MAL.
@@ -1187,6 +1207,101 @@ async function resolveEpisodeThumbnail(
   return { thumbnail, thumbnailSource, log };
 }
 
+export interface ResolvedAnimeArt {
+  poster: string | null;
+  posterSource: 'tmdb' | 'kitsu' | 'anilist' | null;
+  cover: string | null;
+  coverSource: 'tmdb' | 'kitsu' | 'anilist' | null;
+  logo: string | null;
+  logoSource: 'tmdb' | null;
+  log: string[];
+}
+
+// Shared by /anime (single anime metadata + art). Same fallback shape as
+// resolveEpisodeThumbnail above: TMDB -> Kitsu -> AniList, tried in that
+// order, first hit wins -- except poster and cover are resolved
+// INDEPENDENTLY of each other, so e.g. a TMDB poster with no TMDB backdrop
+// still lets Kitsu fill in the cover instead of forcing both down to the
+// same source. Logo has no fallback at all -- TMDB is the only one of the
+// three sources that has a logo art type (Kitsu and AniList don't), so
+// logo is always TMDB-or-nothing, per request.
+async function resolveAnimeArt(
+  malId: number,
+  details: Awaited<ReturnType<typeof getAnimeDetails>>,
+  isList: boolean
+): Promise<ResolvedAnimeArt> {
+  const log: string[] = [];
+  const primaryTitle = details ? (details.titleEnglish || details.title) : null;
+
+  let poster: string | null = null;
+  let posterSource: ResolvedAnimeArt['posterSource'] = null;
+  let cover: string | null = null;
+  let coverSource: ResolvedAnimeArt['coverSource'] = null;
+  let logo: string | null = null;
+  let logoSource: ResolvedAnimeArt['logoSource'] = null;
+
+  // 1) TMDB -- covers poster, cover (backdrop), and logo all at once
+  if (details) {
+    const rawTitles = [...new Set([details.titleEnglish, details.title, details.titleJapanese].filter(
+      (t): t is string => !!t
+    ))];
+    const { titles, seasonHint } = computeTmdbTitleCandidates(rawTitles, log);
+
+    for (const t of titles) {
+      const { result, log: srcLog } = await getTmdbAnimeImages(t, seasonHint, isList);
+      log.push(...srcLog);
+      if (result) {
+        if (result.poster) { poster = result.poster; posterSource = 'tmdb'; }
+        if (result.backdrop) { cover = result.backdrop; coverSource = 'tmdb'; }
+        if (result.logo) { logo = result.logo; logoSource = 'tmdb'; }
+        break;
+      }
+    }
+    if (!poster) log.push('Poster: not found on TMDB, trying Kitsu');
+    if (!cover) log.push('Cover: not found on TMDB, trying Kitsu');
+    if (!logo) log.push('Logo: not found on TMDB (no fallback -- TMDB is the only logo source)');
+  } else {
+    log.push('No anime details -- skipping TMDB, trying Kitsu');
+  }
+
+  // 2) Kitsu -- only fills whichever of poster/cover TMDB didn't
+  if (!poster || !cover) {
+    try {
+      const kitsuAnimeId = await getKitsuAnimeId(malId, primaryTitle, log);
+      if (kitsuAnimeId) {
+        const { result } = await getKitsuAnimeImages(kitsuAnimeId, isList);
+        if (result) {
+          if (!poster && result.poster) { poster = result.poster; posterSource = 'kitsu'; log.push('Poster: found via Kitsu'); }
+          if (!cover && result.cover) { cover = result.cover; coverSource = 'kitsu'; log.push('Cover: found via Kitsu'); }
+        }
+        if (!poster) log.push('Poster: not found on Kitsu, trying AniList');
+        if (!cover) log.push('Cover: not found on Kitsu, trying AniList');
+      } else {
+        log.push('No Kitsu anime match, trying AniList');
+      }
+    } catch (e: any) {
+      log.push(`Kitsu lookup failed (${e?.message}), trying AniList`);
+    }
+  }
+
+  // 3) AniList -- last resort, only fills whichever of poster/cover is still missing
+  if (!poster || !cover) {
+    try {
+      const { result } = await getAnilistAnimeImages(malId, isList);
+      if (result) {
+        if (!poster && result.poster) { poster = result.poster; posterSource = 'anilist'; log.push('Poster: found via AniList'); }
+        if (!cover && result.cover) { cover = result.cover; coverSource = 'anilist'; log.push('Cover: found via AniList'); }
+      }
+      if (!poster) log.push('Poster: not found on any source');
+      if (!cover) log.push('Cover: not found on any source');
+    } catch (e: any) {
+      log.push(`AniList lookup failed (${e?.message})`);
+    }
+  }
+
+  return { poster, posterSource, cover, coverSource, logo, logoSource, log };
+}
+
 // Bounded-concurrency map -- runs `fn` over `items` with at most `limit` in
 // flight at once. Used by /episodes/all so a 1000+ episode show doesn't
 // either (a) fire hundreds of simultaneous outbound requests at once (the
@@ -1206,6 +1321,62 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T,
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return results;
 }
+
+// GET /api/anime?malId=23283[&list=1]
+//
+// Universal single-anime endpoint: MAL metadata (title, synopsis, genres,
+// score, etc. -- everything getAnimeDetails already scrapes) PLUS poster,
+// cover, and logo art resolved via resolveAnimeArt above, all in one call.
+// Same TMDB -> Kitsu -> AniList fallback sequence as /episode uses for
+// episode thumbnails; logo is TMDB-only (see resolveAnimeArt).
+router.get('/anime', async (req: Request, res: Response) => {
+  const malId = parseInt(req.query.malId as string, 10);
+  if (isNaN(malId)) return res.status(400).json({ error: 'malId required' });
+
+  const isList = req.query.list === '1';
+
+  try {
+    const details = await getAnimeDetails(malId);
+    if (!details) return res.status(404).json({ error: 'MAL ID not found' });
+
+    const { poster, posterSource, cover, coverSource, logo, logoSource, log } = await resolveAnimeArt(malId, details, isList);
+
+    return res.json({
+      data: {
+        malId,
+        title: details.title,
+        titleEnglish: details.titleEnglish,
+        titleJapanese: details.titleJapanese,
+        synopsis: details.synopsis,
+        type: details.type,
+        episodes: details.episodes,
+        status: details.status,
+        aired: details.aired,
+        premiered: details.premiered,
+        duration: details.duration,
+        rating: details.rating,
+        score: details.score,
+        scoredBy: details.scoredBy,
+        rank: details.rank,
+        popularity: details.popularity,
+        members: details.members,
+        genres: details.genres,
+        studios: details.studios,
+        source: details.source,
+        streamingPlatforms: details.streamingPlatforms,
+        poster,
+        posterSource,
+        cover,
+        coverSource,
+        logo,
+        logoSource,
+      },
+      log,
+    });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'Combined anime fetch failed', detail: e?.message || String(e) });
+  }
+});
 
 // GET /api/episode?malId=23283[&concurrency=5][&list=1]                -- all episodes
 // GET /api/episode?malId=23283&ep=5[&list=1]                           -- one episode
