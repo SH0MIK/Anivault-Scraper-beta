@@ -291,23 +291,38 @@ async function getShowSeasons(showId: number, log: string[]): Promise<TmdbSeason
 }
 
 /**
- * Walks the season list in order, subtracting each season's episode_count
- * from the absolute episode number until it lands inside one -- e.g. with
- * seasons [S1:32, S2:33, S3:18, ...] and absoluteEp=54: 54-32=22, 22<=33,
- * so that's season 2, episode 22. Returns null if absoluteEp is past every
- * season TMDB currently lists (e.g. a show that's still airing and TMDB
- * hasn't added the newest season yet).
+ * Walks the season list in cumulative order to find which season the
+ * absolute episode number falls under, e.g. with seasons [S1:32, S2:21,
+ * S3:18, ...] and absoluteEp=54: 32+21=53, 54<=53+18=71, so that's season 3.
+ *
+ * Returns TWO candidate (season, epInSeason) pairs for that season, because
+ * TMDB is inconsistent about whether a season's own episode_number field
+ * resets to 1 or keeps counting the absolute number straight through:
+ *   1) epInSeason = absoluteEp itself (unchanged) -- this is what long-
+ *      running shonen imported into TMDB via TheTVDB's "aired order" tend
+ *      to do. Confirmed directly against TMDB for this exact case: Naruto
+ *      Shippuden's season 3 episodes are numbered 54-71, NOT 1-18, even
+ *      though the season only has 18 episodes in it.
+ *   2) epInSeason = the season-relative remainder (54-53=1 here) -- the
+ *      "normal" TMDB convention most shows actually follow.
+ * Tried in that order (absolute first, since it's the case this was
+ * actually seen failing on) so a show using either convention resolves on
+ * the first real request instead of needing a match to fail first.
  */
-function mapAbsoluteEpisode(seasons: TmdbSeasonInfo[], absoluteEp: number): { season: number; epInSeason: number } | null {
-  let remaining = absoluteEp;
+function mapAbsoluteEpisode(seasons: TmdbSeasonInfo[], absoluteEp: number): Array<{ season: number; epInSeason: number }> {
+  let cumulative = 0;
   for (const s of seasons) {
     if (s.episode_count <= 0) continue;
-    if (remaining <= s.episode_count) {
-      return { season: s.season_number, epInSeason: remaining };
+    const before = cumulative;
+    cumulative += s.episode_count;
+    if (absoluteEp <= cumulative) {
+      const relative = absoluteEp - before;
+      const candidates = [{ season: s.season_number, epInSeason: absoluteEp }];
+      if (relative !== absoluteEp) candidates.push({ season: s.season_number, epInSeason: relative });
+      return candidates;
     }
-    remaining -= s.episode_count;
   }
-  return null;
+  return [];
 }
 
 /**
@@ -315,19 +330,16 @@ function mapAbsoluteEpisode(seasons: TmdbSeasonInfo[], absoluteEp: number): { se
  *
  * `epNum` here is the ABSOLUTE episode number (MAL/Jikan-style -- counts
  * straight through 1..N across the whole series), but TMDB splits
- * long-running shows into many seasons, each restarting its own episode
- * numbering from 1 (Naruto Shippuden is ~21 TMDB seasons; One Piece is 20+).
- * So this first fetches the show's season list and walks it to figure out
- * which (season, in-season episode) absoluteEp actually falls under, before
- * ever hitting the per-episode endpoint -- trying `epNum` directly against
- * "season 1" / "season 2" (the old behavior) only ever worked for episodes
- * within whichever of those two seasons happened to be long enough, and
- * silently returned nothing for everything past that.
+ * long-running shows into many seasons (Naruto Shippuden is ~20 TMDB
+ * seasons; One Piece is 20+). So this first fetches the show's season list
+ * to figure out which season absoluteEp falls under, then tries that
+ * episode number two ways within that season -- see mapAbsoluteEpisode for
+ * why there are two candidates, not one; TMDB isn't consistent about
+ * whether a season resets its own episode numbering back to 1.
  *
  * `seasonHint` (title-derived, e.g. "Show II" -> season 2) and a bare
- * season-1/2 attempt at the raw epNum are still tried afterward as
- * fallbacks, in case the season list fetch fails or a show's numbering
- * doesn't line up with its season structure for some other reason.
+ * season-1/2 attempt at the raw epNum are still tried afterward as further
+ * fallbacks, in case the season list fetch fails entirely.
  */
 export async function getEpisodeThumbnail(
   animeTitle: string,
@@ -365,9 +377,9 @@ export async function getEpisodeThumbnail(
     try {
       const seasons = await getShowSeasons(showId, log);
       const mapped = mapAbsoluteEpisode(seasons, epNum);
-      if (mapped) {
-        log.push(`TMDB: absolute ep ${epNum} -> season ${mapped.season} ep ${mapped.epInSeason}`);
-        candidates.push(mapped);
+      if (mapped.length > 0) {
+        log.push(`TMDB: absolute ep ${epNum} -> season ${mapped[0].season} (trying e${mapped.map((c) => c.epInSeason).join('/e')})`);
+        candidates.push(...mapped);
       } else {
         log.push(`TMDB: absolute ep ${epNum} is beyond every season TMDB lists for '${show.name}'`);
       }
