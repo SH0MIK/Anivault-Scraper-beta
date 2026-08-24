@@ -143,3 +143,93 @@ export async function getStreamingEpisodes(malId: number): Promise<AniListStream
   cacheSet(cacheKey, episodes, 'episodes');
   return episodes;
 }
+
+export interface AniListAnimeImages {
+  idMal: number;
+  title: string | null;
+  poster: string | null;          // large — anime "cover" image (AniList calls this field coverImage)
+  posterOriginal: string | null;  // extraLarge
+  cover: string | null;           // wide banner (AniList calls this field bannerImage)
+  coverOriginal: string | null;
+}
+
+export interface AniListAnimeImagesResult {
+  result: AniListAnimeImages | null;
+  log: string[];
+}
+
+const ANIME_IMAGES_QUERY = `
+  query ($malId: Int) {
+    Media(idMal: $malId, type: ANIME) {
+      idMal
+      title { romaji english }
+      coverImage { large extraLarge }
+      bannerImage
+    }
+  }`;
+
+/**
+ * Poster + cover (banner) art for a MAL ID, shaped to match tmdb.ts's and
+ * kitsu.ts's getAnimeImages so routes.ts's combined /api/anime endpoint can
+ * fall through TMDB -> Kitsu -> AniList interchangeably (same as
+ * resolveEpisodeThumbnail already does for episode thumbnails).
+ *
+ * NOTE: AniList's own field names are the reverse of the poster/cover
+ * naming used here (and in kitsu.ts). AniList's `coverImage` is the
+ * portrait key art -- mapped to `poster` below -- and AniList's
+ * `bannerImage` is the wide banner -- mapped to `cover` below.
+ */
+export async function getAnimeImages(malId: number, isList = false): Promise<AniListAnimeImagesResult> {
+  const log: string[] = [];
+  const cacheKey = `anilist:images:${malId}`;
+
+  if (!isList) {
+    const cached = cacheGet<AniListAnimeImages | null>(cacheKey);
+    if (cached !== null) {
+      log.push('AniList images: cache hit');
+      return { result: cached, log };
+    }
+  }
+
+  try {
+    const res = await anilistClient.post('', { query: ANIME_IMAGES_QUERY, variables: { malId } });
+    if (res.data?.errors?.length) {
+      log.push(`AniList images: GraphQL error (${JSON.stringify(res.data.errors).slice(0, 200)})`);
+      cacheSet(cacheKey, null, 'mapping');
+      return { result: null, log };
+    }
+
+    const media = res.data?.data?.Media;
+    if (!media) {
+      log.push(`AniList images: no media found for MAL ID ${malId}`);
+      cacheSet(cacheKey, null, 'mapping');
+      return { result: null, log };
+    }
+
+    const poster: string | null = media.coverImage?.large ?? media.coverImage?.extraLarge ?? null;
+    const posterOriginal: string | null = media.coverImage?.extraLarge ?? poster;
+    const cover: string | null = media.bannerImage ?? null;
+
+    if (!poster && !cover) {
+      log.push(`AniList images: MAL ID ${malId} has no poster or banner image`);
+      cacheSet(cacheKey, null, 'mapping');
+      return { result: null, log };
+    }
+
+    const result: AniListAnimeImages = {
+      idMal: malId,
+      title: media.title?.english || media.title?.romaji || null,
+      poster,
+      posterOriginal,
+      cover,
+      coverOriginal: cover,
+    };
+
+    log.push(`AniList images: found (poster: ${poster ? 'yes' : 'no'}, cover: ${cover ? 'yes' : 'no'})`);
+    cacheSet(cacheKey, result, 'mapping');
+    return { result, log };
+  } catch (e: any) {
+    log.push(`AniList images: request failed (${e?.message})`);
+    return { result: null, log };
+  }
+}
