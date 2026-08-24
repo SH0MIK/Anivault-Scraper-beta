@@ -419,18 +419,35 @@ function parseEpisodeRows($: Doc, malId: number): MalEpisode[] {
     const numCell = row.find('td.episode-number');
     if (!numCell.length) return; // not an episode row (header/other tr)
 
-    // MAL renders a "Compact" view alongside the "Detailed" one, toggled
-    // via CSS rather than left out of the DOM. It reuses the same
-    // episode-number/episode-aired classes but as one row summarizing the
-    // whole season, which .text() then concatenates into a single string
-    // (e.g. "123456789101112" for a 12-episode show). A real episode
-    // number is always short — reject anything that isn't.
+    const titleCell = row.find('td.episode-title');
+
+    // MAL renders a "Compact" view alongside the "Detailed" one, toggled via
+    // CSS rather than left out of the DOM. It's not one-row-per-episode like
+    // the detailed view — it's a SINGLE row summarizing the whole season,
+    // with every episode's number/title stacked as separate elements inside
+    // that one row's cells. numCell.text() then concatenates all of them
+    // into one string (e.g. "123456789101112" for a 12-episode show), and
+    // titleCell has one <a> per episode instead of exactly one.
+    //
+    // The old guard only checked the concatenated number's *length*
+    // (rejecting anything over 4 digits), which coincidentally still looks
+    // like a plausible single episode number whenever a show has 4 or fewer
+    // episodes aired so far — i.e. every currently-airing show during
+    // roughly its first month. At that point titleCell.find('a').first()
+    // silently grabs episode 1's title (the first stacked anchor), producing
+    // a fake extra "episode" whose number is the concatenation of the real
+    // ones and whose title is a duplicate of episode 1's — exactly what was
+    // reported for a 4-episode-in show. Checking anchor count is a
+    // structural signal that doesn't depend on how many episodes happen to
+    // have aired, so it catches this at 1 aired episode just as reliably as
+    // at 40.
+    if (titleCell.find('a').length !== 1) return;
+
     const rawNum = numCell.text().trim();
-    if (!/^\d{1,4}$/.test(rawNum)) return;
+    if (!/^\d{1,4}$/.test(rawNum)) return; // still a useful backstop for longer-running shows
     const num = parseInt(rawNum, 10);
     if (isNaN(num) || seen.has(num)) return;
 
-    const titleCell = row.find('td.episode-title');
     const link = titleCell.find('a').first();
     const title = link.text().trim();
     if (!title) return;
