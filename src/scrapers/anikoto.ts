@@ -104,84 +104,13 @@ function normalizeTitle(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-function significantWords(s: string): string[] {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter((w) => w.length >= 2);
-}
-
-// Words that mark a candidate as a different release from a plain base-
-// title query -- either a spinoff (OVA, special, movie, recap...) or a
-// specific season/part/cour of a franchise that has separately-slugged
-// seasons. If the candidate title has one of these and the query doesn't,
-// it's not the entry the plain query meant -- e.g. query "Attack on Titan"
-// vs candidate "Attack on Titan OVA" used to score 80 and won outright
-// (3-episode OVA instead of the real TV series); query "Attack on Titan"
-// vs candidate "Attack on Titan Season 3" also scored 80 for the same
-// reason (clean prefix, decent ratio) and won with a combined 22-episode
-// count instead of season 1's 25. Since the real match for a plain query is
-// often listed under a different (e.g. native/romaji) title, either
-// false-positive also blocks findAnikotoSlug from ever trying the altTitle
-// fallback, because a "slug found" (even the wrong one) short-circuits that
-// retry. NOTE: this only fires when the query itself lacks the word -- a
-// query that already specifies "Season 3" or "Part 2" is unaffected.
-const TYPE_INDICATOR_WORDS = new Set([
-  'ova', 'ona', 'special', 'specials', 'movie', 'film', 'recap', 'picture', 'pv',
-  'season', 'part', 'cour', 'saga',
-]);
-
-function addsUnrequestedTypeIndicator(query: string, candidateTitle: string): boolean {
-  const queryWords = new Set(significantWords(query));
-  return significantWords(candidateTitle).some((w) => TYPE_INDICATOR_WORDS.has(w) && !queryWords.has(w));
-}
-
-// Ported from animeheaven.ts's scoreTitle, which already had this fix — this
-// copy didn't. Without the length-ratio/direction guard, a short base-
-// franchise title (e.g. "Bleach") scores an unconditional 80 against ANY
-// longer query that happens to start with it (e.g. "Bleach: Sennen Kessen-hen
-// - Kashin-tan"), since needle.startsWith(hay) alone used to be enough. That
-// silently resolved every sequel/season/movie query to the franchise's base
-// entry instead of the specific one — see the Bleach: Thousand-Year Blood War
-// - The Calamity report, which matched the plain 366-episode "Bleach" slug.
 function scoreTitle(query: string, title: string): number {
   const needle = normalizeTitle(query);
   const hay = normalizeTitle(title);
   if (!needle || !hay) return 0;
   if (hay === needle) return 100;
-
-  // Length ratio guards against a short/truncated candidate getting high
-  // confidence against a much longer query just because one is a prefix of
-  // the other.
-  const ratio = Math.min(needle.length, hay.length) / Math.max(needle.length, hay.length);
-
-  // Direction matters too: if the QUERY is the longer string and the
-  // candidate is only a prefix/substring of it, the candidate is likely the
-  // generic franchise/series entry missing a distinguishing season/subtitle
-  // — i.e. probably the wrong one. If the CANDIDATE is the longer string,
-  // the extra text is usually just a season/part suffix on the full query,
-  // which is fine and shouldn't be penalized.
-  const queryIsLonger = needle.length > hay.length;
-  const missingWords = queryIsLonger
-    ? significantWords(query).length - significantWords(title).length
-    : 0;
-
-  // Candidate is the longer string here (queryIsLonger is false) -- if the
-  // extra text it adds over the query is an OVA/special/movie/etc. marker,
-  // treat it like the missingWords case above: a near-miss, not a match.
-  const candidateAddsSpinoffMarker = !queryIsLonger && addsUnrequestedTypeIndicator(query, title);
-
-  if (hay.startsWith(needle) || needle.startsWith(hay)) {
-    if (queryIsLonger && missingWords >= 2) return Math.floor(ratio * 30);
-    if (candidateAddsSpinoffMarker) return Math.floor(ratio * 30);
-    return ratio >= 0.6 ? 80 : Math.floor(ratio * 60);
-  }
-  if (hay.includes(needle) || needle.includes(hay)) {
-    if (queryIsLonger && missingWords >= 2) return Math.floor(ratio * 25);
-    if (candidateAddsSpinoffMarker) return Math.floor(ratio * 25);
-    return ratio >= 0.6 ? 60 : Math.floor(ratio * 45);
-  }
+  if (hay.startsWith(needle) || needle.startsWith(hay)) return 80;
+  if (hay.includes(needle) || needle.includes(hay)) return 60;
   let matches = 0;
   for (const ch of needle) if (hay.includes(ch)) matches++;
   return Math.floor((matches / Math.max(needle.length, 1)) * 40);
@@ -192,72 +121,27 @@ export async function searchAnikoto(query: string): Promise<AnikotoSearchResult[
   const cached = cacheGet<AnikotoSearchResult[]>(cacheKey);
   if (cached) return cached;
 
-  // NOTE: /filter?keyword= is NOT a real search — /filter is the genre/year
-  // browse page, and it silently ignores an unrecognized `keyword` param,
-  // returning the generic "browse everything" listing instead of an error.
-  // That meant every query here used to return the same unrelated batch of
-  // anime (whatever's currently airing/browsable), and scoreTitle() would
-  // still pick a "best" match out of that irrelevant batch — producing a
-  // confidently wrong slug instead of failing loudly.
-  // The actual search is this AJAX endpoint (used by the site's own
-  // quick-search box), returning JSON: { result: { html: "<a href=...>" } }.
-  let html = '';
-  let status: number | undefined;
-  try {
-    const res = await ajax.get('/ajax/anime/search', { params: { keyword: query } });
-    status = res.status;
-    html = res.data?.result?.html ?? res.data?.result ?? (typeof res.data === 'string' ? res.data : '');
-  } catch (err) {
-    log('searchAnikoto: /ajax/anime/search threw', { query, ...errInfo(err) });
-    cacheSet(cacheKey, [], 'episodes');
-    return [];
-  }
-
-  // Cloudflare/bot-check pages return 200 with a challenge HTML body rather
-  // than throwing, so a failed real search can silently look like "zero
-  // results" (or worse, coincidentally parseable /watch/ links from some
-  // unrelated "trending"/"you might like" block on the challenge or error
-  // page) instead of surfacing loudly. Flag it explicitly so a bad slug
-  // pick can be traced back to "the search never actually ran" instead of
-  // just "scored too low" — see the Attack on Titan / Naruto report where
-  // every candidate returned was a completely unrelated show.
-  const looksLikeChallenge = /cf-chl|cf-browser-verification|Just a moment|Attention Required|g-recaptcha|Checking your browser/i.test(html);
-  if (looksLikeChallenge) {
-    log('searchAnikoto: response looks like a bot-check/challenge page, not real search results', { query, status, htmlSnippet: html.slice(0, 300) });
-  }
-
-  const $ = cheerio.load(html);
+  const res = await http.get('/filter', { params: { keyword: query } });
+  const $ = cheerio.load(res.data);
   const results: AnikotoSearchResult[] = [];
 
-  $('a[href*="/watch/"]').each((_, el) => {
-    const $el = $(el);
-    const href = $el.attr('href') ?? '';
-    const slug = href
-      .replace(/^https?:\/\/[^/]+/, '')
-      .replace(/^\/watch\//, '')
-      .replace(/\/ep-\d+$/, '')
-      .replace(/\/$/, '');
-    const title =
-      $el.find('.film-name, .dynamic-name, .d-title, .name').first().text().trim() ||
-      $el.attr('title')?.trim() ||
-      $el.text().trim();
-    if (!slug || !title) return;
-    results.push({ slug, title });
-  });
+  $('.items.flw-wrap .film_list-wrap .flw-item, .film_list-wrap .flw-item, .ani.items .item, section .items .item').each(
+    (_, el) => {
+      const $el = $(el);
+      const href = $el.attr('href') ?? $el.find('a').first().attr('href') ?? '';
+      const slug = href
+        .replace(/^https?:\/\/[^/]+/, '')
+        .replace(/^\/watch\//, '')
+        .replace(/\/ep-\d+$/, '')
+        .replace(/\/$/, '');
+      const title = $el.find('.name, .d-title').first().text().trim();
+      if (!slug || !title) return;
+      results.push({ slug, title });
+    }
+  );
 
-  const unique = Array.from(new Map(results.map((r) => [r.slug, r])).values());
-  if (unique.length === 0) {
-    log('searchAnikoto: no parseable results from /ajax/anime/search', { query, htmlSnippet: html.slice(0, 300) });
-  } else {
-    // Always log a compact summary (not just the zero-result case). If the
-    // same handful of unrelated titles shows up across totally different
-    // queries, that's the site returning some fallback/trending block
-    // instead of an actual search match, not a scoring problem.
-    log('searchAnikoto: results', { query, count: unique.length, titles: unique.slice(0, 8).map((r) => r.title) });
-  }
-
-  cacheSet(cacheKey, unique, 'episodes');
-  return unique;
+  cacheSet(cacheKey, results, 'episodes');
+  return results;
 }
 
 export async function findAnikotoSlug(title: string): Promise<string | null> {
@@ -289,25 +173,8 @@ export async function findAnikotoSlug(title: string): Promise<string | null> {
 
   const unique = Array.from(new Map(allResults.map((result) => [result.slug, result])).values());
   if (!unique.length) return null;
-
-  const scored = unique
-    .map((result) => ({ result, score: scoreTitle(title, result.title) }))
-    .sort((a, b) => b.score - a.score);
-  const best = scored[0];
-
-  // Below this, `best` is just "the least-bad option in an irrelevant batch",
-  // not an actual match — returning it silently used to point episode data
-  // at a completely unrelated anime instead of surfacing "not found".
-  const MIN_MATCH_SCORE = 50;
-  if (best.score < MIN_MATCH_SCORE) {
-    log('findAnikotoSlug: best candidate scored too low, treating as no match', {
-      title,
-      top: scored.slice(0, 5).map((s) => ({ title: s.result.title, slug: s.result.slug, score: s.score })),
-    });
-    return null;
-  }
-
-  return best.result.slug;
+  return unique.map((result) => ({ result, score: scoreTitle(title, result.title) })).sort((a, b) => b.score - a.score)[0]
+    .result.slug;
 }
 
 // ══════════════════════════════════════════════════════════════
