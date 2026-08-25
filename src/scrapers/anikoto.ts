@@ -112,17 +112,25 @@ function significantWords(s: string): string[] {
     .filter((w) => w.length >= 2);
 }
 
-// Words that mark a candidate as a spinoff release (OVA, special, movie,
-// recap...) rather than the main series. If the candidate title has one of
-// these and the query doesn't, it's a different release that just happens
-// to share the base title -- e.g. query "Attack on Titan" vs candidate
-// "Attack on Titan OVA" used to score 80 (clean prefix, ratio 0.81) and won
-// outright, silently pointing episode data at a 3-episode OVA instead of
-// the real TV series. Since the real series is often listed under a
-// different (e.g. native/romaji) title, this false-positive also blocked
-// findAnikotoSlug from ever trying the altTitle fallback, because a
-// "slug found" (even the wrong one) short-circuits that retry.
-const TYPE_INDICATOR_WORDS = new Set(['ova', 'ona', 'special', 'specials', 'movie', 'film', 'recap', 'picture', 'pv']);
+// Words that mark a candidate as a different release from a plain base-
+// title query -- either a spinoff (OVA, special, movie, recap...) or a
+// specific season/part/cour of a franchise that has separately-slugged
+// seasons. If the candidate title has one of these and the query doesn't,
+// it's not the entry the plain query meant -- e.g. query "Attack on Titan"
+// vs candidate "Attack on Titan OVA" used to score 80 and won outright
+// (3-episode OVA instead of the real TV series); query "Attack on Titan"
+// vs candidate "Attack on Titan Season 3" also scored 80 for the same
+// reason (clean prefix, decent ratio) and won with a combined 22-episode
+// count instead of season 1's 25. Since the real match for a plain query is
+// often listed under a different (e.g. native/romaji) title, either
+// false-positive also blocks findAnikotoSlug from ever trying the altTitle
+// fallback, because a "slug found" (even the wrong one) short-circuits that
+// retry. NOTE: this only fires when the query itself lacks the word -- a
+// query that already specifies "Season 3" or "Part 2" is unaffected.
+const TYPE_INDICATOR_WORDS = new Set([
+  'ova', 'ona', 'special', 'specials', 'movie', 'film', 'recap', 'picture', 'pv',
+  'season', 'part', 'cour', 'saga',
+]);
 
 function addsUnrequestedTypeIndicator(query: string, candidateTitle: string): boolean {
   const queryWords = new Set(significantWords(query));

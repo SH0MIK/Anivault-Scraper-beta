@@ -54,9 +54,13 @@ function significantWords(s: string): string[] {
 
 // See anikoto.ts's copy of this same fix for the full rationale: a
 // candidate that only differs from the query by an OVA/special/movie/etc.
-// marker is a different release, not the main entry, even though it scores
-// well on prefix/ratio alone.
-const TYPE_INDICATOR_WORDS = new Set(['ova', 'ona', 'special', 'specials', 'movie', 'film', 'recap', 'picture', 'pv']);
+// marker, OR by an unrequested season/part/cour marker, is a different
+// release, not the main entry, even though it scores well on prefix/ratio
+// alone.
+const TYPE_INDICATOR_WORDS = new Set([
+  'ova', 'ona', 'special', 'specials', 'movie', 'film', 'recap', 'picture', 'pv',
+  'season', 'part', 'cour', 'saga',
+]);
 
 function addsUnrequestedTypeIndicator(query: string, candidateTitle: string): boolean {
   const queryWords = new Set(significantWords(query));
