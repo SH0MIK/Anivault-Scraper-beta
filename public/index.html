@@ -108,6 +108,34 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
 
 /* ── TESTER ── */
 .tester-wrap { background:var(--surface); border:1px solid var(--border); border-radius:16px; overflow:hidden; }
+
+.tester-mode-switch { display:flex; gap:8px; margin-bottom:20px; }
+.tester-mode-btn { background:var(--surface); border:1px solid var(--border); color:var(--muted); padding:11px 20px; border-radius:10px; font-family:var(--sans); font-weight:700; font-size:13px; cursor:pointer; transition:all 0.15s; }
+.tester-mode-btn:hover { border-color:var(--accent2); color:var(--text); }
+.tester-mode-btn.active { background:var(--accent2); border-color:var(--accent2); color:#000; }
+.tester-panel { display:none; }
+.tester-panel.active { display:block; }
+
+.generic-tester-layout { display:grid; grid-template-columns:280px 1fr; gap:24px; align-items:start; }
+@media (max-width:820px) { .generic-tester-layout { grid-template-columns:1fr; } }
+.generic-endpoint-list { max-height:640px; overflow-y:auto; border:1px solid var(--border); border-radius:10px; padding:12px; background:var(--bg); }
+.gen-category-label { font-family:var(--mono); font-size:10px; letter-spacing:0.08em; text-transform:uppercase; color:var(--accent); margin:14px 0 6px; padding:0 4px; }
+.gen-category-label:first-child { margin-top:0; }
+.gen-endpoint-item { display:block; width:100%; text-align:left; background:none; border:none; color:var(--muted); font-family:var(--mono); font-size:11.5px; padding:7px 10px; border-radius:7px; cursor:pointer; transition:all 0.12s; margin-bottom:2px; }
+.gen-endpoint-item:hover { background:var(--surface2); color:var(--text); }
+.gen-endpoint-item.active { background:var(--accent2); color:#000; font-weight:700; }
+.gen-endpoint-item .gem-badge { display:inline-block; font-size:9px; font-weight:700; padding:1px 5px; border-radius:4px; margin-right:6px; background:var(--surface2); color:var(--accent2); }
+.gen-endpoint-item.active .gem-badge { background:rgba(0,0,0,0.2); color:#000; }
+.generic-form-area { min-height:200px; }
+.gen-field-row { margin-bottom:14px; }
+.gen-field-row .field-label { display:flex; align-items:center; gap:6px; }
+.gen-field-badge { font-family:var(--mono); font-size:9px; padding:1px 6px; border-radius:4px; font-weight:700; }
+.gen-field-badge.req { background:rgba(255,80,80,0.15); color:#ff6b6b; }
+.gen-field-badge.opt { background:rgba(255,255,255,0.06); color:var(--muted); }
+.gen-smart-preview { margin-bottom:16px; }
+.gen-smart-preview img { max-width:220px; border-radius:8px; border:1px solid var(--border); display:block; }
+.gen-smart-preview iframe { width:100%; aspect-ratio:16/9; border-radius:8px; border:1px solid var(--border); }
+
 .tester-top { display:flex; align-items:center; gap:8px; padding:16px 20px; border-bottom:1px solid var(--border); background:rgba(0,0,0,0.3); }
 .tester-dot { width:10px; height:10px; border-radius:50%; }
 .tester-body { padding:32px; }
@@ -1061,8 +1089,14 @@ GET /api/watch?source=<span class="str">animeheaven</span>&heavenId=<span class=
 
   <section class="section" id="tester">
     <div class="section-title">API Tester</div>
-        <div class="section-sub">Search for an anime, pick your source and server, then fetch live stream data. AnimeHeaven can also use a manual show id.</div>
+    <div class="section-sub">Two ways in: the guided streaming flow (search → source → server → watch), or a raw form for any of the ~35 documented endpoints.</div>
 
+    <div class="tester-mode-switch">
+      <button class="tester-mode-btn active" onclick="setTesterMode('streaming', this)">🎬 Watch &amp; Stream</button>
+      <button class="tester-mode-btn" onclick="setTesterMode('generic', this)">🧰 All Endpoints</button>
+    </div>
+
+    <div id="tester-panel-streaming" class="tester-panel active">
     <div class="tester-wrap">
       <div class="tester-top">
         <div class="tester-dot" style="background:#ff5f57"></div>
@@ -1217,6 +1251,70 @@ GET /api/watch?source=<span class="str">animeheaven</span>&heavenId=<span class=
 
       </div>
     </div>
+    </div>
+    <!-- /tester-panel-streaming -->
+
+    <div id="tester-panel-generic" class="tester-panel">
+      <div class="tester-wrap">
+        <div class="tester-top">
+          <div class="tester-dot" style="background:#ff5f57"></div>
+          <div class="tester-dot" style="background:#febc2e"></div>
+          <div class="tester-dot" style="background:#28c840"></div>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:8px">anivault-api · endpoint tester</span>
+        </div>
+        <div class="tester-body">
+
+          <div class="generic-tester-layout">
+            <div class="generic-endpoint-list">
+              <input class="field-input" id="genFilter" placeholder="Filter endpoints..." oninput="renderEndpointList()" autocomplete="off" style="margin-bottom:12px;" />
+              <div id="genEndpointList"></div>
+            </div>
+
+            <div class="generic-form-area">
+              <div id="genEmptyState" style="color:var(--muted);font-family:var(--mono);font-size:12px;padding:40px 0;text-align:center;">
+                ← Pick an endpoint to build a request
+              </div>
+
+              <div id="genFormWrap" style="display:none;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+                  <span class="ep-method" id="genMethodBadge">GET</span>
+                  <span id="genPathLabel" style="font-family:var(--mono);font-size:13px;color:var(--text);font-weight:600;"></span>
+                </div>
+                <div id="genDescLabel" style="color:var(--muted);font-size:12px;margin-bottom:18px;"></div>
+
+                <div id="genParamFields"></div>
+
+                <div style="margin:20px 0;">
+                  <label class="field-label">API Base URL</label>
+                  <input class="field-input" id="genBaseUrl" placeholder="https://your-app.up.railway.app (blank = this server)" oninput="updateGenUrlPreview()" />
+                </div>
+
+                <div id="genUrlPreview" style="font-family:var(--mono);font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px;color:var(--muted);word-break:break-all;"></div>
+
+                <button class="fetch-btn" id="genFetchBtn" onclick="doGenericFetch()">⚡ Send Request</button>
+
+                <div class="result-area" id="genResultArea">
+                  <div class="divider"></div>
+                  <div class="status-bar" id="genStatusBar" style="display:none;">
+                    <div class="status-dot" id="genStatusDot"></div>
+                    <span class="status-url" id="genStatusUrl"></span>
+                    <span id="genStatusCode"></span>
+                  </div>
+                  <div id="genSmartPreview"></div>
+                  <div class="result-json">
+                    <div class="code-header">Response <button class="copy-btn" onclick="copyGenResult()">Copy</button></div>
+                    <pre id="genJsonOutput"></pre>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+    <!-- /tester-panel-generic -->
+
   </section>
 
   <!-- ERRORS -->
@@ -1633,4 +1731,288 @@ async function doFetch() {
           <div class="stream-card-label">Intro / Outro Skip</div>
           <div class="stream-card-val">${data.intro?`Intro: ${data.intro.start}s–${data.intro.end}s`:'No intro'}${data.outro?`  ·  Outro: ${data.outro.start}s–${data.outro.end}s`:''}</div>
         </div>
-        ${data.note ? `<div class="stream-card" style="grid-column:1/-1;border-color:rgba(245,158,11,0.4)"><div class="stream-card-label" style="color:var(--warning)">⚠ Note</div><div class="stream-card-val
+        ${data.note ? `<div class="stream-card" style="grid-column:1/-1;border-color:rgba(245,158,11,0.4)"><div class="stream-card-label" style="color:var(--warning)">⚠ Note</div><div class="stream-card-val">${data.note}</div></div>` : ''}
+      `;
+    } else {
+      document.getElementById('streamCards').innerHTML = `
+        <div class="stream-card" style="grid-column:1/-1">
+          <div class="stream-card-label">Result</div>
+          <div class="stream-card-val">${JSON.stringify(data).slice(0,200)}...</div>
+        </div>`;
+    }
+  } catch(e) {
+    lastResult = { error: e.message };
+    document.getElementById('jsonOutput').innerHTML = `<span style="color:var(--accent)">Network Error: ${e.message}</span>`;
+    dot.className = 'status-dot err';
+    sCode.textContent = 'Network Error'; sCode.className = 'status-code err';
+  }
+
+  btn.disabled = false; btn.textContent = '⚡ Fetch Stream Data';
+}
+
+// ── SYNTAX HIGHLIGHT
+function highlight(json) {
+  return json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g, m => {
+      if (/^"/.test(m)) return /:$/.test(m) ? `<span class="key">${m}</span>` : `<span class="str">${m}</span>`;
+      if (/true|false/.test(m)) return `<span class="kw">${m}</span>`;
+      if (/null/.test(m)) return `<span class="cmt">${m}</span>`;
+      return `<span class="num">${m}</span>`;
+    });
+}
+
+// ── CLOSE SEARCH ON OUTSIDE CLICK
+document.addEventListener('click', e => {
+  if (!e.target.closest('#searchInput') && !e.target.closest('#searchResults')) {
+    document.getElementById('searchResults').style.display = 'none';
+  }
+});
+
+// ══════════════════════════════════════ GENERIC ENDPOINT TESTER ══════════════════════════════════════
+
+function setTesterMode(mode, btn) {
+  document.querySelectorAll('.tester-mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tester-panel-streaming').classList.toggle('active', mode === 'streaming');
+  document.getElementById('tester-panel-generic').classList.toggle('active', mode === 'generic');
+  if (mode === 'generic' && !ENDPOINT_REGISTRY_RENDERED) {
+    renderEndpointList();
+    ENDPOINT_REGISTRY_RENDERED = true;
+  }
+}
+
+// path: {param} placeholders become path inputs. query: array of
+// [name, required, placeholder]. Every entry here was checked against the
+// actual route handler in routes.ts, not guessed from the written docs.
+const ENDPOINT_REGISTRY = [
+  { cat:'Streaming', method:'GET', path:'/api/search', desc:'AniList text search (MAL fallback if AniList is down)', query:[['q',true,'naruto'],['limit',false,'10']] },
+  { cat:'Streaming', method:'GET', path:'/api/info', desc:'Resolve AniList/MAL IDs for a show', query:[['anilistId',false,'20'],['malId',false,'20']] },
+  { cat:'Streaming', method:'GET', path:'/api/episodes', desc:'Streaming-source episode list', query:[['anilistId',false,'20'],['malId',false,'20'],['source',false,'anikoto']] },
+  { cat:'Streaming', method:'GET', path:'/api/servers', desc:'Available servers for one episode', query:[['anilistId',false,'20'],['malId',false,'20'],['ep',true,'1'],['type',false,'sub'],['source',false,'anikoto'],['heavenId',false,'']] },
+  { cat:'Streaming', method:'GET', path:'/api/watch', desc:'Resolve a playable stream', query:[['anilistId',false,'20'],['malId',false,'20'],['heavenId',false,''],['ep',true,'1'],['type',false,'sub'],['source',false,'anikoto'],['server',false,'']] },
+  { cat:'Streaming', method:'GET', path:'/api/health', desc:'Service status + source list', query:[] },
+
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}', desc:'Full anime details', pathParams:['id'], pathPlaceholders:{id:'16498'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}/episodes', desc:'Paginated episode list', pathParams:['id'], pathPlaceholders:{id:'16498'}, query:[['page',false,'1']] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}/episodes/{epNum}', desc:'One episode', pathParams:['id','epNum'], pathPlaceholders:{id:'16498',epNum:'1'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}/characters', desc:'Cast + voice actors', pathParams:['id'], pathPlaceholders:{id:'16498'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/character/{id}', desc:'Single character bio/anime/VA', pathParams:['id'], pathPlaceholders:{id:'45627'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}/pictures', desc:'Anime picture gallery', pathParams:['id'], pathPlaceholders:{id:'16498'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/character/{id}/pictures', desc:'Character picture gallery', pathParams:['id'], pathPlaceholders:{id:'45627'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}/themes', desc:'OP/ED credits + Spotify', pathParams:['id'], pathPlaceholders:{id:'16498'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}/videos', desc:'Trailers + music videos', pathParams:['id'], pathPlaceholders:{id:'16498'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}/recommendations', desc:'Top 12 "you might also like"', pathParams:['id'], pathPlaceholders:{id:'16498'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}/external', desc:'Official site + related links', pathParams:['id'], pathPlaceholders:{id:'16498'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/anime/{id}/streaming', desc:'Legal streaming platforms', pathParams:['id'], pathPlaceholders:{id:'16498'}, query:[] },
+  { cat:'MAL Scraper', method:'GET', path:'/api/mal/search', desc:'MAL text search', query:[['q',true,'attack on titan'],['limit',false,'8']] },
+
+  { cat:'AniList / TMDB / Kitsu', method:'GET', path:'/api/anilist/season', desc:'Current airing season', query:[['malId',false,'']] },
+  { cat:'AniList / TMDB / Kitsu', method:'GET', path:'/api/anilist/top-banners', desc:'Banner images by MAL ID', query:[['limit',false,'200'],['malId',false,'']] },
+  { cat:'AniList / TMDB / Kitsu', method:'GET', path:'/api/anilist/id', desc:'MAL ID → AniList ID', query:[['malId',true,'16498']] },
+  { cat:'AniList / TMDB / Kitsu', method:'GET', path:'/api/anilist/episodes', desc:'AniList streamingEpisodes list', query:[['malId',true,'16498'],['ep',false,'']] },
+  { cat:'AniList / TMDB / Kitsu', method:'GET', path:'/api/anilist/anime', desc:'Poster + cover art from AniList', query:[['malId',false,'16498'],['list',false,'']] },
+  { cat:'AniList / TMDB / Kitsu', method:'GET', path:'/api/tmdb/anime', desc:'Poster + cover + logo from TMDB', query:[['malId',false,'16498'],['title',false,''],['list',false,'']] },
+  { cat:'AniList / TMDB / Kitsu', method:'GET', path:'/api/tmdb/episode-thumb', desc:'Episode still from TMDB', query:[['ep',true,'1'],['malId',false,'16498'],['title',false,'']] },
+  { cat:'AniList / TMDB / Kitsu', method:'GET', path:'/api/kitsu/anime', desc:'Poster + cover art from Kitsu', query:[['malId',false,'16498'],['title',false,''],['list',false,'']] },
+  { cat:'AniList / TMDB / Kitsu', method:'GET', path:'/api/kitsu/episode-thumb', desc:'Episode still from Kitsu', query:[['ep',true,'1'],['malId',false,'16498'],['title',false,'']] },
+
+  { cat:'Combined', method:'GET', path:'/api/anime', desc:'MAL details + poster/cover/logo', query:[['malId',true,'16498'],['list',false,'']] },
+  { cat:'Combined', method:'GET', path:'/api/episode', desc:'Episode metadata + thumbnail', query:[['malId',true,'16498'],['ep',false,'1'],['concurrency',false,''],['list',false,'']] },
+];
+
+let ENDPOINT_REGISTRY_RENDERED = false;
+let selectedEndpointIdx = null;
+
+function renderEndpointList() {
+  const filter = (document.getElementById('genFilter').value || '').toLowerCase();
+  const listEl = document.getElementById('genEndpointList');
+  listEl.innerHTML = '';
+  let lastCat = null;
+  ENDPOINT_REGISTRY.forEach((ep, i) => {
+    const hay = (ep.path + ' ' + ep.desc + ' ' + ep.cat).toLowerCase();
+    if (filter && !hay.includes(filter)) return;
+    if (ep.cat !== lastCat) {
+      const label = document.createElement('div');
+      label.className = 'gen-category-label';
+      label.textContent = ep.cat;
+      listEl.appendChild(label);
+      lastCat = ep.cat;
+    }
+    const btn = document.createElement('button');
+    btn.className = 'gen-endpoint-item' + (i === selectedEndpointIdx ? ' active' : '');
+    btn.innerHTML = `<span class="gem-badge">${ep.method}</span>${escapeAttr(ep.path)}`;
+    btn.onclick = () => selectEndpoint(i);
+    listEl.appendChild(btn);
+  });
+}
+
+function selectEndpoint(i) {
+  selectedEndpointIdx = i;
+  const ep = ENDPOINT_REGISTRY[i];
+  renderEndpointList();
+
+  document.getElementById('genEmptyState').style.display = 'none';
+  document.getElementById('genFormWrap').style.display = 'block';
+  document.getElementById('genMethodBadge').textContent = ep.method;
+  document.getElementById('genPathLabel').textContent = ep.path;
+  document.getElementById('genDescLabel').textContent = ep.desc;
+
+  const fieldsEl = document.getElementById('genParamFields');
+  fieldsEl.innerHTML = '';
+
+  (ep.pathParams || []).forEach(name => {
+    const row = document.createElement('div');
+    row.className = 'gen-field-row';
+    row.innerHTML = `<label class="field-label">${name} <span class="gen-field-badge req">path · required</span></label>
+      <input class="field-input gen-input" data-kind="path" data-name="${escapeAttr(name)}" placeholder="${escapeAttr((ep.pathPlaceholders||{})[name]||'')}" oninput="updateGenUrlPreview()" />`;
+    fieldsEl.appendChild(row);
+  });
+
+  (ep.query || []).forEach(([name, required, placeholder]) => {
+    const row = document.createElement('div');
+    row.className = 'gen-field-row';
+    row.innerHTML = `<label class="field-label">${name} <span class="gen-field-badge ${required ? 'req' : 'opt'}">${required ? 'required' : 'optional'}</span></label>
+      <input class="field-input gen-input" data-kind="query" data-name="${escapeAttr(name)}" placeholder="${escapeAttr(placeholder||'')}" oninput="updateGenUrlPreview()" />`;
+    fieldsEl.appendChild(row);
+  });
+
+  document.getElementById('genResultArea').style.display = 'none';
+  updateGenUrlPreview();
+}
+
+function buildGenUrl() {
+  const ep = ENDPOINT_REGISTRY[selectedEndpointIdx];
+  if (!ep) return { url: '', missing: [] };
+  const base = (document.getElementById('genBaseUrl').value.trim().replace(/\/$/, '')) || window.location.origin;
+  let path = ep.path;
+  const missing = [];
+
+  (ep.pathParams || []).forEach(name => {
+    const input = document.querySelector(`.gen-input[data-kind="path"][data-name="${name}"]`);
+    const val = input ? input.value.trim() : '';
+    if (!val) missing.push(name);
+    path = path.replace(`{${name}}`, encodeURIComponent(val || `{${name}}`));
+  });
+
+  const qs = [];
+  (ep.query || []).forEach(([name, required]) => {
+    const input = document.querySelector(`.gen-input[data-kind="query"][data-name="${name}"]`);
+    const val = input ? input.value.trim() : '';
+    if (required && !val) missing.push(name);
+    if (val) qs.push(`${encodeURIComponent(name)}=${encodeURIComponent(val)}`);
+  });
+
+  const url = base + path + (qs.length ? '?' + qs.join('&') : '');
+  return { url, missing };
+}
+
+function updateGenUrlPreview() {
+  const { url, missing } = buildGenUrl();
+  const el = document.getElementById('genUrlPreview');
+  el.innerHTML = missing.length
+    ? `<span style="color:var(--warning)">Fill in required: ${missing.join(', ')}</span>`
+    : escapeAttr(url);
+}
+
+async function doGenericFetch() {
+  const { url, missing } = buildGenUrl();
+  if (missing.length) { updateGenUrlPreview(); return; }
+
+  const btn = document.getElementById('genFetchBtn');
+  const resultArea = document.getElementById('genResultArea');
+  const statusBar = document.getElementById('genStatusBar');
+  const statusDot = document.getElementById('genStatusDot');
+  const statusUrl = document.getElementById('genStatusUrl');
+  const statusCode = document.getElementById('genStatusCode');
+  const jsonOut = document.getElementById('genJsonOutput');
+  const preview = document.getElementById('genSmartPreview');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Fetching...';
+  resultArea.style.display = 'block';
+  statusBar.style.display = 'flex';
+  preview.innerHTML = '';
+  statusUrl.textContent = url;
+
+  const t0 = performance.now();
+  try {
+    const res = await fetch(url);
+    const ms = Math.round(performance.now() - t0);
+    const data = await res.json();
+    lastGenResult = data;
+
+    statusDot.style.background = res.ok ? 'var(--success)' : 'var(--accent)';
+    statusCode.innerHTML = `<span style="color:${res.ok ? 'var(--success)' : 'var(--accent)'}">${res.status}</span> · ${ms}ms`;
+    jsonOut.innerHTML = highlight(JSON.stringify(data, null, 2));
+    renderGenSmartPreview(data, preview);
+  } catch (e) {
+    statusDot.style.background = 'var(--accent)';
+    statusCode.textContent = 'Network error';
+    jsonOut.textContent = String(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ Send Request';
+  }
+}
+
+// Pulls out anything image/video-shaped from the response, wherever it's
+// nested, so the tester doesn't need per-endpoint render rules -- it just
+// looks for recognizable field names.
+function renderGenSmartPreview(data, container) {
+  container.innerHTML = '';
+  const found = { images: [], embeds: [] };
+  const seen = new Set();
+
+  function walk(node) {
+    if (!node || typeof node !== 'object' || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) { node.slice(0, 8).forEach(walk); return; }
+    for (const [k, v] of Object.entries(node)) {
+      if (typeof v === 'string') {
+        if (/^https?:\/\//.test(v) && /\.(jpe?g|png|webp|gif)(\?|$)/i.test(v) && found.images.length < 6) found.images.push(v);
+        if (/^https?:\/\//.test(v) && /youtube-nocookie\.com\/embed\//.test(v) && found.embeds.length < 1) found.embeds.push(v);
+      } else if (typeof v === 'object') {
+        walk(v);
+      }
+    }
+  }
+  walk(data);
+
+  if (!found.images.length && !found.embeds.length) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'gen-smart-preview';
+  found.embeds.forEach(url => {
+    const f = document.createElement('iframe');
+    f.src = url; f.allowFullscreen = true; f.style.marginBottom = '10px';
+    wrap.appendChild(f);
+  });
+  if (found.images.length) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+    found.images.forEach(src => {
+      const img = document.createElement('img');
+      img.src = src; img.loading = 'lazy';
+      img.onerror = () => img.style.display = 'none';
+      row.appendChild(img);
+    });
+    wrap.appendChild(row);
+  }
+  container.appendChild(wrap);
+}
+
+let lastGenResult = null;
+function copyGenResult() {
+  if (lastGenResult) navigator.clipboard.writeText(JSON.stringify(lastGenResult, null, 2));
+}
+
+
+document.getElementById('baseUrl').addEventListener('input', updateUrlPreview);
+document.getElementById('epInput').addEventListener('input', updateUrlPreview);
+document.getElementById('heavenIdInput').addEventListener('input', () => {
+  resetServers();
+  updateUrlPreview();
+  loadServers();
+});
+</script>
+</body>
+</html>
