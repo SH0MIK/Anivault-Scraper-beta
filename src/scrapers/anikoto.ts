@@ -202,13 +202,28 @@ export async function searchAnikoto(query: string): Promise<AnikotoSearchResult[
   // The actual search is this AJAX endpoint (used by the site's own
   // quick-search box), returning JSON: { result: { html: "<a href=...>" } }.
   let html = '';
+  let status: number | undefined;
   try {
     const res = await ajax.get('/ajax/anime/search', { params: { keyword: query } });
+    status = res.status;
     html = res.data?.result?.html ?? res.data?.result ?? (typeof res.data === 'string' ? res.data : '');
   } catch (err) {
     log('searchAnikoto: /ajax/anime/search threw', { query, ...errInfo(err) });
     cacheSet(cacheKey, [], 'episodes');
     return [];
+  }
+
+  // Cloudflare/bot-check pages return 200 with a challenge HTML body rather
+  // than throwing, so a failed real search can silently look like "zero
+  // results" (or worse, coincidentally parseable /watch/ links from some
+  // unrelated "trending"/"you might like" block on the challenge or error
+  // page) instead of surfacing loudly. Flag it explicitly so a bad slug
+  // pick can be traced back to "the search never actually ran" instead of
+  // just "scored too low" — see the Attack on Titan / Naruto report where
+  // every candidate returned was a completely unrelated show.
+  const looksLikeChallenge = /cf-chl|cf-browser-verification|Just a moment|Attention Required|g-recaptcha|Checking your browser/i.test(html);
+  if (looksLikeChallenge) {
+    log('searchAnikoto: response looks like a bot-check/challenge page, not real search results', { query, status, htmlSnippet: html.slice(0, 300) });
   }
 
   const $ = cheerio.load(html);
@@ -233,6 +248,12 @@ export async function searchAnikoto(query: string): Promise<AnikotoSearchResult[
   const unique = Array.from(new Map(results.map((r) => [r.slug, r])).values());
   if (unique.length === 0) {
     log('searchAnikoto: no parseable results from /ajax/anime/search', { query, htmlSnippet: html.slice(0, 300) });
+  } else {
+    // Always log a compact summary (not just the zero-result case). If the
+    // same handful of unrelated titles shows up across totally different
+    // queries, that's the site returning some fallback/trending block
+    // instead of an actual search match, not a scoring problem.
+    log('searchAnikoto: results', { query, count: unique.length, titles: unique.slice(0, 8).map((r) => r.title) });
   }
 
   cacheSet(cacheKey, unique, 'episodes');
@@ -269,9 +290,10 @@ export async function findAnikotoSlug(title: string): Promise<string | null> {
   const unique = Array.from(new Map(allResults.map((result) => [result.slug, result])).values());
   if (!unique.length) return null;
 
-  const best = unique
+  const scored = unique
     .map((result) => ({ result, score: scoreTitle(title, result.title) }))
-    .sort((a, b) => b.score - a.score)[0];
+    .sort((a, b) => b.score - a.score);
+  const best = scored[0];
 
   // Below this, `best` is just "the least-bad option in an irrelevant batch",
   // not an actual match — returning it silently used to point episode data
@@ -280,9 +302,7 @@ export async function findAnikotoSlug(title: string): Promise<string | null> {
   if (best.score < MIN_MATCH_SCORE) {
     log('findAnikotoSlug: best candidate scored too low, treating as no match', {
       title,
-      bestTitle: best.result.title,
-      bestSlug: best.result.slug,
-      score: best.score,
+      top: scored.slice(0, 5).map((s) => ({ title: s.result.title, slug: s.result.slug, score: s.score })),
     });
     return null;
   }
