@@ -288,3 +288,81 @@ export async function getEpisodeInfo(
     return { result: null, kitsuAnimeId, log };
   }
 }
+
+export interface KitsuEpisodeData {
+  kitsuAnimeId: number;
+  episodeId: number;
+  title: string | null;
+  titleJapanese: string | null;
+  aired: string | null;
+  thumbnail: string | null;
+}
+
+export interface KitsuEpisodeDataResult {
+  result: KitsuEpisodeData | null;
+  kitsuAnimeId: number | null;
+  log: string[];
+}
+
+/**
+ * Combined title+air-date+thumbnail fetch for a known Kitsu anime ID +
+ * episode number -- one GET instead of the two identical
+ * `/anime/{id}/episodes?filter[number]=` requests getEpisodeThumbnail and
+ * getEpisodeInfo each made for the same row. Use this from a caller that
+ * wants both (the /api/episode route); the separate functions above stay
+ * for callers that only need one field.
+ */
+export async function getEpisodeData(
+  kitsuAnimeId: number,
+  epNum: number,
+  isList = false
+): Promise<KitsuEpisodeDataResult> {
+  const log: string[] = [];
+  const cacheKey = `kitsu:epdata:${kitsuAnimeId}:${epNum}`;
+
+  if (!isList) {
+    const cached = cacheGet<KitsuEpisodeData | null>(cacheKey);
+    if (cached !== null) {
+      log.push('Kitsu ep data: cache hit');
+      return { result: cached, kitsuAnimeId, log };
+    }
+  }
+
+  try {
+    const epRes = await kitsuClient.get(`/anime/${kitsuAnimeId}/episodes`, {
+      params: { 'filter[number]': epNum, 'page[limit]': 1 },
+    });
+    const epData = epRes.data?.data?.[0] ?? null;
+
+    if (!epData) {
+      log.push(`Kitsu ep ${epNum}: episode record not found`);
+      cacheSet(cacheKey, null, 'episodes');
+      return { result: null, kitsuAnimeId, log };
+    }
+
+    const attrs = epData.attributes ?? {};
+    const title: string | null = attrs.canonicalTitle ?? attrs.titles?.en ?? attrs.titles?.en_us ?? null;
+    const titleJapanese: string | null = attrs.titles?.ja_jp ?? null;
+    const aired: string | null = attrs.airdate ?? null;
+    const imgs = attrs.thumbnail ?? {};
+    let thumbnail: string | null = null;
+    for (const size of ['original', 'large', 'medium', 'small', 'tiny']) {
+      if (imgs[size]) { thumbnail = imgs[size]; break; }
+    }
+
+    if (!title && !thumbnail) {
+      log.push(`Kitsu ep ${epNum}: no title or thumbnail on Kitsu`);
+      cacheSet(cacheKey, null, 'episodes');
+      return { result: null, kitsuAnimeId, log };
+    }
+
+    const result: KitsuEpisodeData = { kitsuAnimeId, episodeId: parseInt(epData.id, 10), title, titleJapanese, aired, thumbnail };
+    cacheSet(cacheKey, result, 'episodes');
+    log.push(`Kitsu ep ${epNum}: found (title=${!!title}, thumbnail=${!!thumbnail})`);
+    return { result, kitsuAnimeId, log };
+  } catch (e: any) {
+    const status = e?.response?.status;
+    log.push(`Kitsu ep data: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+    return { result: null, kitsuAnimeId, log };
+  }
+}

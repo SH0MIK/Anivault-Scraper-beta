@@ -561,3 +561,101 @@ export async function getShowEpisodeCount(animeTitle: string): Promise<{ showId:
     return null;
   }
 }
+
+export interface TmdbEpisodeData {
+  showId: number;
+  showName: string;
+  season: number;
+  title: string | null;
+  aired: string | null;
+  stillPath: string | null;
+  thumbnail: string | null;
+  thumbnailOriginal: string | null;
+}
+
+export interface TmdbEpisodeDataResult {
+  result: TmdbEpisodeData | null;
+  log: string[];
+}
+
+/**
+ * Combined title+air-date+still fetch, one TMDB request per (season,
+ * epInSeason) candidate instead of the two separate ones getEpisodeThumbnail
+ * and getEpisodeInfo each make -- /api/episode's whole-show mode resolves
+ * both thumbnail and info for every episode, and on a long-running show
+ * (One Piece: 1175+ episodes) doubling the per-episode TMDB call count was
+ * enough extra latency to trip the upstream request timeout. Use this from
+ * a caller that wants both; getEpisodeThumbnail/getEpisodeInfo stay as they
+ * are for callers (the standalone /tmdb/episode-thumb route) that only need
+ * one or the other.
+ */
+export async function getEpisodeData(
+  animeTitle: string,
+  epNum: number,
+  seasonHint: number | null = null,
+  isList = false
+): Promise<TmdbEpisodeDataResult> {
+  const log: string[] = [];
+
+  if (!TMDB_API_KEY) {
+    log.push('TMDB: skipped (no TMDB_API_KEY set on scraper)');
+    return { result: null, log };
+  }
+
+  const cacheKey = `tmdb:epdata:${animeTitle.toLowerCase()}:s${seasonHint ?? ''}:${epNum}`;
+  if (!isList) {
+    const cached = cacheGet<TmdbEpisodeData | null>(cacheKey);
+    if (cached !== null) {
+      log.push('TMDB: cache hit');
+      return { result: cached, log };
+    }
+  }
+
+  try {
+    const show = await searchShow(animeTitle, log);
+    if (!show) {
+      cacheSet(cacheKey, null, 'episodes');
+      return { result: null, log };
+    }
+    const showId = show.id;
+    const candidates = await buildEpisodeCandidates(showId, show.name, epNum, seasonHint, log);
+
+    for (const { season, epInSeason } of candidates) {
+      try {
+        const epRes = await tmdbClient.get(`/tv/${showId}/season/${season}/episode/${epInSeason}`, {
+          params: { api_key: TMDB_API_KEY },
+        });
+        const name: string | null = epRes.data?.name ?? null;
+        const airDate: string | null = epRes.data?.air_date ?? null;
+        const still: string | null = epRes.data?.still_path ?? null;
+        log.push(`TMDB ${show.name} s${season}e${epInSeason}: ${name || still ? `found (name=${!!name}, still=${!!still})` : 'no episode data'}`);
+
+        if (name || still) {
+          const result: TmdbEpisodeData = {
+            showId,
+            showName: show.name,
+            season,
+            title: name,
+            aired: airDate,
+            stillPath: still,
+            thumbnail: still ? `https://image.tmdb.org/t/p/w780${still}` : null,
+            thumbnailOriginal: still ? `https://image.tmdb.org/t/p/original${still}` : null,
+          };
+          cacheSet(cacheKey, result, 'episodes');
+          return { result, log };
+        }
+      } catch (e: any) {
+        const status = e?.response?.status;
+        log.push(`TMDB s${season}e${epInSeason}: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+      }
+    }
+
+    log.push(`TMDB: no episode data found for '${animeTitle}' ep ${epNum} (tried ${candidates.map((c) => `s${c.season}e${c.epInSeason}`).join(', ')})`);
+    cacheSet(cacheKey, null, 'episodes');
+    return { result: null, log };
+  } catch (e: any) {
+    const status = e?.response?.status;
+    log.push(`TMDB search: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+    return { result: null, log };
+  }
+}
