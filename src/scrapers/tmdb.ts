@@ -325,6 +325,40 @@ function mapAbsoluteEpisode(seasons: TmdbSeasonInfo[], absoluteEp: number): Arra
   return [];
 }
 
+// Shared by getEpisodeThumbnail and getEpisodeInfo below -- both need the
+// same "which (season, epInSeason) pairs could absoluteEp map to" list, just
+// to fetch different fields off the resulting episode object.
+async function buildEpisodeCandidates(
+  showId: number,
+  showName: string,
+  epNum: number,
+  seasonHint: number | null,
+  log: string[]
+): Promise<Array<{ season: number; epInSeason: number }>> {
+  const candidates: Array<{ season: number; epInSeason: number }> = [];
+
+  try {
+    const seasons = await getShowSeasons(showId, log);
+    const mapped = mapAbsoluteEpisode(seasons, epNum);
+    if (mapped.length > 0) {
+      log.push(`TMDB: absolute ep ${epNum} -> season ${mapped[0].season} (trying e${mapped.map((c) => c.epInSeason).join('/e')})`);
+      candidates.push(...mapped);
+    } else {
+      log.push(`TMDB: absolute ep ${epNum} is beyond every season TMDB lists for '${showName}'`);
+    }
+  } catch (e: any) {
+    log.push(`TMDB: couldn't fetch season list for '${showName}' (${e?.message})`);
+  }
+
+  for (const season of [seasonHint, 1, 2]) {
+    if (!season || season <= 0) continue;
+    if (candidates.some((c) => c.season === season && c.epInSeason === epNum)) continue;
+    candidates.push({ season, epInSeason: epNum });
+  }
+
+  return candidates;
+}
+
 /**
  * Looks up an episode-specific still from TMDB by anime title + episode number.
  *
@@ -370,30 +404,7 @@ export async function getEpisodeThumbnail(
       return { result: null, log };
     }
     const showId = show.id;
-
-    // Build (season, in-season episode) candidates to try, in priority order.
-    const candidates: Array<{ season: number; epInSeason: number }> = [];
-
-    try {
-      const seasons = await getShowSeasons(showId, log);
-      const mapped = mapAbsoluteEpisode(seasons, epNum);
-      if (mapped.length > 0) {
-        log.push(`TMDB: absolute ep ${epNum} -> season ${mapped[0].season} (trying e${mapped.map((c) => c.epInSeason).join('/e')})`);
-        candidates.push(...mapped);
-      } else {
-        log.push(`TMDB: absolute ep ${epNum} is beyond every season TMDB lists for '${show.name}'`);
-      }
-    } catch (e: any) {
-      log.push(`TMDB: couldn't fetch season list for '${show.name}' (${e?.message})`);
-    }
-
-    // Fallbacks: seasonHint and season 1/2, tried against the raw epNum --
-    // covers shows without a clean season-list mapping (or where it's wrong).
-    for (const season of [seasonHint, 1, 2]) {
-      if (!season || season <= 0) continue;
-      if (candidates.some((c) => c.season === season && c.epInSeason === epNum)) continue;
-      candidates.push({ season, epInSeason: epNum });
-    }
+    const candidates = await buildEpisodeCandidates(showId, show.name, epNum, seasonHint, log);
 
     for (const { season, epInSeason } of candidates) {
       try {
@@ -429,5 +440,124 @@ export async function getEpisodeThumbnail(
     const status = e?.response?.status;
     log.push(`TMDB search: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
     return { result: null, log };
+  }
+}
+
+export interface TmdbEpisodeInfo {
+  showId: number;
+  showName: string;
+  season: number;
+  title: string;
+  aired: string | null; // TMDB air_date, YYYY-MM-DD
+}
+
+export interface TmdbEpisodeInfoResult {
+  result: TmdbEpisodeInfo | null;
+  log: string[];
+}
+
+/**
+ * Episode title + air date from TMDB, by anime title + absolute episode
+ * number. Same show-search + absolute->season/episode mapping as
+ * getEpisodeThumbnail (see buildEpisodeCandidates), just pulling name/
+ * air_date off the episode object instead of still_path -- kept as a
+ * separate function/cache key since a still can be missing on an episode
+ * that otherwise has a title+date (or vice versa), so callers resolving
+ * thumbnail vs. info independently shouldn't have one's cache miss cost
+ * the other a redundant fetch.
+ */
+export async function getEpisodeInfo(
+  animeTitle: string,
+  epNum: number,
+  seasonHint: number | null = null,
+  isList = false
+): Promise<TmdbEpisodeInfoResult> {
+  const log: string[] = [];
+
+  if (!TMDB_API_KEY) {
+    log.push('TMDB: skipped (no TMDB_API_KEY set on scraper)');
+    return { result: null, log };
+  }
+
+  const cacheKey = `tmdb:epinfo:${animeTitle.toLowerCase()}:s${seasonHint ?? ''}:${epNum}`;
+  if (!isList) {
+    const cached = cacheGet<TmdbEpisodeInfo | null>(cacheKey);
+    if (cached !== null) {
+      log.push('TMDB: cache hit');
+      return { result: cached, log };
+    }
+  }
+
+  try {
+    const show = await searchShow(animeTitle, log);
+    if (!show) {
+      cacheSet(cacheKey, null, 'episodes');
+      return { result: null, log };
+    }
+    const showId = show.id;
+    const candidates = await buildEpisodeCandidates(showId, show.name, epNum, seasonHint, log);
+
+    for (const { season, epInSeason } of candidates) {
+      try {
+        const epRes = await tmdbClient.get(`/tv/${showId}/season/${season}/episode/${epInSeason}`, {
+          params: { api_key: TMDB_API_KEY },
+        });
+        const name: string | null = epRes.data?.name ?? null;
+        const airDate: string | null = epRes.data?.air_date ?? null;
+        log.push(`TMDB ${show.name} s${season}e${epInSeason}: ${name ? `found '${name}'` : 'no episode data'}`);
+
+        // TMDB defaults an un-aired/placeholder episode's name to something
+        // like "Episode 12" -- still useful (better than nothing), but real
+        // titles from a `name` that isn't just the generic placeholder win
+        // over a bare still-existing check the way getEpisodeThumbnail does.
+        if (name) {
+          const result: TmdbEpisodeInfo = { showId, showName: show.name, season, title: name, aired: airDate };
+          cacheSet(cacheKey, result, 'episodes');
+          return { result, log };
+        }
+      } catch (e: any) {
+        const status = e?.response?.status;
+        log.push(`TMDB s${season}e${epInSeason}: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+      }
+    }
+
+    log.push(`TMDB: no episode info found for '${animeTitle}' ep ${epNum} (tried ${candidates.map((c) => `s${c.season}e${c.epInSeason}`).join(', ')})`);
+    cacheSet(cacheKey, null, 'episodes');
+    return { result: null, log };
+  } catch (e: any) {
+    const status = e?.response?.status;
+    log.push(`TMDB search: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+    return { result: null, log };
+  }
+}
+
+/**
+ * Total episode count TMDB currently lists for a show (sum of episode_count
+ * across all non-special seasons). Used to detect when MAL's scraped
+ * episode-list page is undercounting an airing show (MAL can lag a scrape
+ * or drop a row) so /api/episode can pad in the missing tail episodes from
+ * TMDB/AniList/Kitsu instead of silently reporting a stale count.
+ */
+export async function getShowEpisodeCount(animeTitle: string): Promise<{ showId: number; count: number } | null> {
+  const log: string[] = [];
+  if (!TMDB_API_KEY) return null;
+
+  const cacheKey = `tmdb:epcount:${animeTitle.toLowerCase()}`;
+  const cached = cacheGet<{ showId: number; count: number } | null>(cacheKey);
+  if (cached !== null) return cached;
+
+  try {
+    const show = await searchShow(animeTitle, log);
+    if (!show) {
+      cacheSet(cacheKey, null, 'episodes');
+      return null;
+    }
+    const seasons = await getShowSeasons(show.id, log);
+    const count = seasons.reduce((sum, s) => sum + Math.max(0, s.episode_count), 0);
+    const result = { showId: show.id, count };
+    cacheSet(cacheKey, result, 'episodes');
+    return result;
+  } catch {
+    return null;
   }
 }

@@ -218,3 +218,73 @@ export async function getEpisodeThumbnail(
     return { result: null, kitsuAnimeId, log };
   }
 }
+
+export interface KitsuEpisodeInfo {
+  kitsuAnimeId: number;
+  episodeId: number;
+  title: string;
+  titleJapanese: string | null;
+  aired: string | null; // Kitsu's `airdate`, YYYY-MM-DD
+}
+
+export interface KitsuEpisodeInfoResult {
+  result: KitsuEpisodeInfo | null;
+  kitsuAnimeId: number | null;
+  log: string[];
+}
+
+/**
+ * Episode title + air date for a known Kitsu anime ID + episode number.
+ * Last-resort source in the TMDB -> MAL -> AniList -> Kitsu episode-info
+ * priority chain, same reasoning as getEpisodeThumbnail above: whichever
+ * of the four actually has the row wins.
+ */
+export async function getEpisodeInfo(
+  kitsuAnimeId: number,
+  epNum: number,
+  isList = false
+): Promise<KitsuEpisodeInfoResult> {
+  const log: string[] = [];
+  const cacheKey = `kitsu:epinfo:${kitsuAnimeId}:${epNum}`;
+
+  if (!isList) {
+    const cached = cacheGet<KitsuEpisodeInfo | null>(cacheKey);
+    if (cached !== null) {
+      log.push('Kitsu ep info: cache hit');
+      return { result: cached, kitsuAnimeId, log };
+    }
+  }
+
+  try {
+    const epRes = await kitsuClient.get(`/anime/${kitsuAnimeId}/episodes`, {
+      params: { 'filter[number]': epNum, 'page[limit]': 1 },
+    });
+    const epData = epRes.data?.data?.[0] ?? null;
+
+    if (!epData) {
+      log.push(`Kitsu ep ${epNum}: episode record not found`);
+      cacheSet(cacheKey, null, 'episodes');
+      return { result: null, kitsuAnimeId, log };
+    }
+
+    const attrs = epData.attributes ?? {};
+    const title: string | null = attrs.canonicalTitle ?? attrs.titles?.en ?? attrs.titles?.en_us ?? null;
+    const titleJapanese: string | null = attrs.titles?.ja_jp ?? null;
+    const aired: string | null = attrs.airdate ?? null;
+
+    if (!title) {
+      log.push(`Kitsu ep ${epNum}: no title on Kitsu`);
+      cacheSet(cacheKey, null, 'episodes');
+      return { result: null, kitsuAnimeId, log };
+    }
+
+    const result: KitsuEpisodeInfo = { kitsuAnimeId, episodeId: parseInt(epData.id, 10), title, titleJapanese, aired };
+    cacheSet(cacheKey, result, 'episodes');
+    log.push(`Kitsu ep ${epNum}: found '${title}'`);
+    return { result, kitsuAnimeId, log };
+  } catch (e: any) {
+    const status = e?.response?.status;
+    log.push(`Kitsu ep info: ${status ? `HTTP ${status}` : `request failed (${e?.message})`}`);
+    return { result: null, kitsuAnimeId, log };
+  }
+}
