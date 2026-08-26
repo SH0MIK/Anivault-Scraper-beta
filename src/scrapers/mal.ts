@@ -493,11 +493,23 @@ async function scrapeEpisodePage(malId: number, page: number): Promise<MalEpisod
 
 export async function getEpisodes(malId: number, page = 1): Promise<MalEpisodePage> {
   const cacheKey = `mal:episodes:${malId}:${page}`;
-  const cached = cacheGet<MalEpisodePage>(cacheKey);
-  if (cached) return cached;
+
+  // Currently-airing shows gain a new episode row every week, so a cached
+  // page (up to 1h stale) can undercount for as long as the TTL lives --
+  // that's the "1174 vs 1175" bug. getAnimeDetails is already cached
+  // (24h "mapping" bucket), so this status check is nearly free after the
+  // first hit; only bypass the episode cache for shows still airing, and
+  // let finished shows (the vast majority of lookups) keep the 1h cache.
+  const details = await getAnimeDetails(malId).catch(() => null);
+  const isAiring = details?.status === 'Currently Airing';
+
+  if (!isAiring) {
+    const cached = cacheGet<MalEpisodePage>(cacheKey);
+    if (cached) return cached;
+  }
 
   const result = await malQueue.add(() => scrapeEpisodePage(malId, page));
-  cacheSet(cacheKey, result, 'episodes');
+  if (!isAiring) cacheSet(cacheKey, result, 'episodes');
   return result;
 }
 
