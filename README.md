@@ -150,8 +150,18 @@ Proxies a direct MP4 stream (used by AnimeHeaven), forwarding `Range`
 requests for seeking.
 
 #### `GET /api/health`
+Unified with anivault.co's `/healthz` shape (`{ status, checks, external }`) so status.anivault.co can render both services the same way. `sources` is a static list of configured scraper backends, not a live reachability probe of senshi/animeheaven/miruro/anikoto themselves.
 ```
-→ { status, version, sources[], uptime, cache, timestamp }
+→ {
+  status: "ok",
+  checks: {
+    process: { ok, label, detail, badges: [{ label: "Uptime", value }], critical: true },
+    cache:   { ok, label, detail, badges: [{ label: "Keys" }, { label: "Hits" }, { label: "Misses" }], critical: false }
+  },
+  external: {},
+  meta: { version, sources[] },
+  timestamp
+}
 ```
 
 ---
