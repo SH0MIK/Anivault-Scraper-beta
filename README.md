@@ -18,7 +18,7 @@ no matter what the upstream server sends.
 
 ```mermaid
 flowchart LR
-    Client([AniVault site / Senshi Player]) -->|1: search / info| API[Scraper API]
+    Client([AniVault site]) -->|1: search / info| API[Scraper API]
     API -->|AniList + MAL ID mapping| AniList[(AniList GraphQL)]
     Client -->|2: episodes| API
     Client -->|3: servers| API
@@ -88,7 +88,7 @@ List episodes for a title on a given source.
 | Param | Required | Notes |
 |---|---|---|
 | `anilistId` / `malId` | yes* | *unless `heavenId` is used with `source=animeheaven` |
-| `source` | no | `animeheaven` \| `anikoto` — **always pass this explicitly**; the route's own default is still `senshi`, which no longer exists once it's deleted |
+| `source` | no | `animeheaven` \| `anikoto` (default `anikoto`) |
 | `heavenId` | no | manual AnimeHeaven show id |
 ```
 GET /api/episodes?anilistId=20&source=anikoto
@@ -150,7 +150,7 @@ Proxies a direct MP4 stream (used by AnimeHeaven), forwarding `Range`
 requests for seeking.
 
 #### `GET /api/health`
-Unified with anivault.co's `/healthz` shape (`{ status, checks, external }`) so status.anivault.co can render both services the same way. `sources` is a static list of configured scraper backends, not a live reachability probe of senshi/animeheaven/miruro/anikoto themselves.
+Unified with anivault.co's `/healthz` shape (`{ status, checks, external }`) so status.anivault.co can render both services the same way. `sources` is a static list of configured scraper backends, not a live reachability probe of animeheaven/anikoto themselves.
 ```
 → {
   status: "ok",
