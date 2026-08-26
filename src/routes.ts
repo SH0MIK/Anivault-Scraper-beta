@@ -8,8 +8,8 @@ import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getAllEpisodes as getAllMalEpisodes, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml } from './scrapers/mal';
 import { getSeasonNow, getTopBanners, getStreamingEpisodes, AniListStreamingEpisode, getAnimeImages as getAnilistAnimeImages } from './scrapers/anilist';
-import { getEpisodeThumbnail as getTmdbEpisodeThumbnail, getAnimeImages as getTmdbAnimeImages, extractSeasonHint } from './scrapers/tmdb';
-import { getKitsuAnimeId, getEpisodeThumbnail as getKitsuEpisodeThumbnail, getAnimeImages as getKitsuAnimeImages } from './scrapers/kitsu';
+import { getEpisodeThumbnail as getTmdbEpisodeThumbnail, getEpisodeInfo as getTmdbEpisodeInfo, getShowEpisodeCount as getTmdbEpisodeCount, getAnimeImages as getTmdbAnimeImages, extractSeasonHint } from './scrapers/tmdb';
+import { getKitsuAnimeId, getEpisodeThumbnail as getKitsuEpisodeThumbnail, getEpisodeInfo as getKitsuEpisodeInfo, getAnimeImages as getKitsuAnimeImages } from './scrapers/kitsu';
 
 const router = Router();
 
@@ -1056,6 +1056,132 @@ async function resolveEpisodeThumbnail(
   return { thumbnail, thumbnailSource, log };
 }
 
+export interface ResolvedEpisodeInfo {
+  title: string | null;
+  titleJapanese: string | null;
+  aired: string | null;
+  filler: boolean | null;
+  recap: boolean | null;
+  infoSource: 'tmdb' | 'mal' | 'anilist' | 'kitsu' | null;
+  log: string[];
+}
+
+// Episode title/air-date, in TMDB -> MAL -> AniList -> Kitsu priority --
+// same fallback shape and reasoning as resolveEpisodeThumbnail above, just
+// for the metadata fields instead of the image. TMDB goes first now because
+// MAL's own episode-list page can lag or drop a row for an airing show
+// (confirmed against One Piece ep 1175: MAL's site had it, but our scrape
+// of that page didn't), while TMDB's per-episode REST endpoint has been
+// reliably ahead of that.
+//
+// filler/recap have no equivalent anywhere but MAL, so those two fields are
+// always sourced from MAL when available regardless of which source won
+// title/aired -- a TMDB-sourced title doesn't blank out MAL's filler flag.
+async function resolveEpisodeInfo(
+  malId: number,
+  epNum: number,
+  details: Awaited<ReturnType<typeof getAnimeDetails>>,
+  isList: boolean,
+  anilistEpisodes?: AniListStreamingEpisode[]
+): Promise<ResolvedEpisodeInfo> {
+  const log: string[] = [];
+
+  const malEpisode = await getMalEpisode(malId, epNum).catch((e: any) => {
+    log.push(`Episode info: MAL lookup failed (${e?.message})`);
+    return null;
+  });
+
+  let title: string | null = null;
+  let titleJapanese: string | null = null;
+  let aired: string | null = null;
+  let infoSource: ResolvedEpisodeInfo['infoSource'] = null;
+
+  // 1) TMDB
+  if (details) {
+    const rawTitles = [...new Set([details.titleEnglish, details.title, details.titleJapanese].filter(
+      (t): t is string => !!t
+    ))];
+    const { titles, seasonHint } = computeTmdbTitleCandidates(rawTitles, log);
+
+    for (const t of titles) {
+      const { result, log: srcLog } = await getTmdbEpisodeInfo(t, epNum, seasonHint, isList);
+      log.push(...srcLog);
+      if (result) {
+        title = result.title;
+        aired = result.aired;
+        infoSource = 'tmdb';
+        break;
+      }
+    }
+    if (!title) log.push('Episode info: not found on TMDB, trying MAL');
+  } else {
+    log.push('Episode info: no anime details, skipping TMDB, trying MAL');
+  }
+
+  // 2) MAL
+  if (!title && malEpisode?.title) {
+    title = malEpisode.title;
+    titleJapanese = malEpisode.titleJapanese;
+    aired = malEpisode.aired;
+    infoSource = 'mal';
+    log.push('Episode info: found via MAL');
+  } else if (!title) {
+    log.push('Episode info: not found on MAL, trying AniList');
+  }
+
+  // 3) AniList streamingEpisodes -- titles come formatted "Episode N - Real
+  // Title", so strip the leading "Episode N - " off before using it.
+  if (!title) {
+    try {
+      const episodes = anilistEpisodes ?? (await getStreamingEpisodes(malId));
+      const match = matchAnilistEpisode(episodes, epNum);
+      if (match?.title) {
+        title = match.title.replace(/^episode\s*\d+\s*[-:]\s*/i, '').trim() || match.title;
+        infoSource = 'anilist';
+        log.push('Episode info: found via AniList streamingEpisodes');
+      } else {
+        log.push('Episode info: not found on AniList, trying Kitsu');
+      }
+    } catch (e: any) {
+      log.push(`Episode info: AniList lookup failed (${e?.message}), trying Kitsu`);
+    }
+  }
+
+  // 4) Kitsu (last resort)
+  if (!title) {
+    try {
+      const primaryTitle = details ? (details.titleEnglish || details.title) : null;
+      const kitsuAnimeId = await getKitsuAnimeId(malId, primaryTitle, log);
+      if (kitsuAnimeId) {
+        const { result } = await getKitsuEpisodeInfo(kitsuAnimeId, epNum, isList);
+        if (result) {
+          title = result.title;
+          titleJapanese = result.titleJapanese;
+          aired = result.aired;
+          infoSource = 'kitsu';
+          log.push('Episode info: found via Kitsu');
+        } else {
+          log.push('Episode info: not found on any source');
+        }
+      } else {
+        log.push('Episode info: no Kitsu anime match');
+      }
+    } catch (e: any) {
+      log.push(`Episode info: Kitsu lookup failed (${e?.message})`);
+    }
+  }
+
+  return {
+    title,
+    titleJapanese: titleJapanese ?? malEpisode?.titleJapanese ?? null,
+    aired: aired ?? malEpisode?.aired ?? null,
+    filler: malEpisode?.filler ?? null,
+    recap: malEpisode?.recap ?? null,
+    infoSource,
+    log,
+  };
+}
+
 export interface ResolvedAnimeArt {
   poster: string | null;
   posterSource: 'tmdb' | 'kitsu' | 'anilist' | null;
@@ -1262,20 +1388,24 @@ router.get('/episode', async (req: Request, res: Response) => {
 
     // Single episode
     if (hasEp) {
-      const malEpisode = await getMalEpisode(malId, epNum).catch(() => null);
-      const { thumbnail, thumbnailSource, log } = await resolveEpisodeThumbnail(malId, epNum, details, isList);
+      const [{ thumbnail, thumbnailSource, log: thumbLog }, info] = await Promise.all([
+        resolveEpisodeThumbnail(malId, epNum, details, isList),
+        resolveEpisodeInfo(malId, epNum, details, isList),
+      ]);
+      const log = [...thumbLog, ...info.log];
 
-      if (!thumbnail) return res.status(404).json({ error: 'No thumbnail found from any source', log });
+      if (!thumbnail && !info.title) return res.status(404).json({ error: 'No episode data found from any source', log });
 
       return res.json({
         data: {
           malId,
           episode: epNum,
-          title: malEpisode?.title ?? null,
-          titleJapanese: malEpisode?.titleJapanese ?? null,
-          aired: malEpisode?.aired ?? null,
-          filler: malEpisode?.filler ?? null,
-          recap: malEpisode?.recap ?? null,
+          title: info.title,
+          titleJapanese: info.titleJapanese,
+          aired: info.aired,
+          filler: info.filler,
+          recap: info.recap,
+          infoSource: info.infoSource,
           thumbnail,
           thumbnailSource,
         },
@@ -1293,18 +1423,64 @@ router.get('/episode', async (req: Request, res: Response) => {
     const anilistEpisodes = await getStreamingEpisodes(malId).catch(() => [] as AniListStreamingEpisode[]);
 
     const episodes = await mapWithConcurrency(malEpisodes, concurrency, async (ep) => {
-      const { thumbnail, thumbnailSource } = await resolveEpisodeThumbnail(malId, ep.malId, details, isList, anilistEpisodes);
+      const [{ thumbnail, thumbnailSource }, info] = await Promise.all([
+        resolveEpisodeThumbnail(malId, ep.malId, details, isList, anilistEpisodes),
+        resolveEpisodeInfo(malId, ep.malId, details, isList, anilistEpisodes),
+      ]);
       return {
         episode: ep.malId,
-        title: ep.title,
-        titleJapanese: ep.titleJapanese,
-        aired: ep.aired,
-        filler: ep.filler,
-        recap: ep.recap,
+        title: info.title ?? ep.title,
+        titleJapanese: info.titleJapanese ?? ep.titleJapanese,
+        aired: info.aired ?? ep.aired,
+        filler: info.filler ?? ep.filler,
+        recap: info.recap ?? ep.recap,
+        infoSource: info.infoSource ?? 'mal',
         thumbnail,
         thumbnailSource,
       };
     });
+
+    // MAL's episode-list page can lag or drop the newest row(s) for an
+    // airing show (this is the "1174 vs 1175" bug -- MAL's own site had ep
+    // 1175, our scrape of the page didn't). Cross-check the count TMDB
+    // currently lists and pad in whatever tail episodes MAL is missing,
+    // sourcing those extra rows through the same TMDB -> AniList -> Kitsu
+    // chain (MAL skipped, since it's the source that's missing them).
+    const lastMalEp = malEpisodes[malEpisodes.length - 1]?.malId ?? episodes.length;
+    let tmdbCount: number | null = null;
+    if (details) {
+      const rawTitles = [...new Set([details.titleEnglish, details.title, details.titleJapanese].filter(
+        (t): t is string => !!t
+      ))];
+      const dummyLog: string[] = [];
+      const { titles } = computeTmdbTitleCandidates(rawTitles, dummyLog);
+      for (const t of titles) {
+        const found = await getTmdbEpisodeCount(t).catch(() => null);
+        if (found) { tmdbCount = found.count; break; }
+      }
+    }
+
+    if (tmdbCount && tmdbCount > lastMalEp) {
+      const missingNums = Array.from({ length: tmdbCount - lastMalEp }, (_, i) => lastMalEp + 1 + i);
+      const padded = await mapWithConcurrency(missingNums, concurrency, async (num) => {
+        const info = await resolveEpisodeInfo(malId, num, details, isList, anilistEpisodes);
+        const { thumbnail, thumbnailSource } = await resolveEpisodeThumbnail(malId, num, details, isList, anilistEpisodes);
+        return {
+          episode: num,
+          title: info.title,
+          titleJapanese: info.titleJapanese,
+          aired: info.aired,
+          filler: info.filler,
+          recap: info.recap,
+          infoSource: info.infoSource,
+          thumbnail,
+          thumbnailSource,
+        };
+      });
+      // Only keep padded rows that actually resolved to something -- an
+      // empty TMDB placeholder row is worse than just stopping at MAL's count.
+      episodes.push(...padded.filter((e) => e.title));
+    }
 
     return res.json({
       malId,
