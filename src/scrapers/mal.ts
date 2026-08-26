@@ -6,7 +6,7 @@ import { cacheGet, cacheSet } from '../utils/cache';
 // MYANIMELIST.NET — direct scrape, replacing Jikan
 //   /anime/{id}   → anime details page (sidebar fields + schema.org tags)
 //
-// MAL is NOT behind Cloudflare (unlike Senshi), so no FlareSolverr needed.
+// MAL is NOT behind Cloudflare, so no FlareSolverr needed.
 // It IS strict about scrape rate — a single misbehaving client gets 429'd
 // or IP-banned fast. Every request goes through `malQueue` below, which
 // serializes requests with a fixed delay between them (concurrency 1).

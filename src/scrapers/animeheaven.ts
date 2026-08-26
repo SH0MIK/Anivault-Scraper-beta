@@ -5,7 +5,7 @@ import { cacheGet, cacheSet } from '../utils/cache';
 const BASE = 'https://animeheaven.me';
 // AnimeHeaven is NOT behind Cloudflare — no FlareSolverr needed, so we skip it
 // entirely (leaving useFlareSolverr at its default `false`). This avoids
-// paying for Senshi's slow FlareSolverr instance on every AnimeHeaven request.
+// paying for a slow FlareSolverr instance on every AnimeHeaven request.
 const http = makeClient(BASE, BASE + '/');
 
 export interface HeavenSearchResult {
