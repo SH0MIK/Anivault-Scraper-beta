@@ -564,13 +564,36 @@ GET /api/watch?source=<span class="str">animeheaven</span>&heavenId=<span class=
         <span class="ep-chevron">▼</span>
       </div>
       <div class="endpoint-body">
+        <div class="section-sub" style="margin-bottom:12px">Unified with anivault.co's <code>/healthz</code> shape so status.anivault.co can render both services the same way. <code>meta.sources</code> is a static list of configured scraper backends, not a live reachability probe of each source.</div>
         <div class="code-block">
           <div class="code-header">Example Response <button class="copy-btn" onclick="copyBlock(this)">Copy</button></div>
           <pre>{
   <span class="key">"status"</span>: <span class="str">"ok"</span>,
-  <span class="key">"version"</span>: <span class="str">"1.0.0"</span>,
-  <span class="key">"sources"</span>: [<span class="str">"animeheaven"</span>, <span class="str">"anikoto"</span>],
-  <span class="key">"uptime"</span>: <span class="num">3600</span>,
+  <span class="key">"checks"</span>: {
+    <span class="key">"process"</span>: {
+      <span class="key">"ok"</span>: <span class="num">true</span>,
+      <span class="key">"label"</span>: <span class="str">"Scraper Process"</span>,
+      <span class="key">"detail"</span>: <span class="str">"API process is running and serving requests."</span>,
+      <span class="key">"badges"</span>: [{ <span class="key">"label"</span>: <span class="str">"Uptime"</span>, <span class="key">"value"</span>: <span class="str">"60m"</span> }],
+      <span class="key">"critical"</span>: <span class="num">true</span>
+    },
+    <span class="key">"cache"</span>: {
+      <span class="key">"ok"</span>: <span class="num">true</span>,
+      <span class="key">"label"</span>: <span class="str">"Response Cache"</span>,
+      <span class="key">"detail"</span>: <span class="str">"In-memory cache is active."</span>,
+      <span class="key">"badges"</span>: [
+        { <span class="key">"label"</span>: <span class="str">"Keys"</span>, <span class="key">"value"</span>: <span class="str">"12"</span> },
+        { <span class="key">"label"</span>: <span class="str">"Hits"</span>, <span class="key">"value"</span>: <span class="str">"340"</span> },
+        { <span class="key">"label"</span>: <span class="str">"Misses"</span>, <span class="key">"value"</span>: <span class="str">"22"</span> }
+      ],
+      <span class="key">"critical"</span>: <span class="num">false</span>
+    }
+  },
+  <span class="key">"external"</span>: {},
+  <span class="key">"meta"</span>: {
+    <span class="key">"version"</span>: <span class="str">"1.1.0-anikoto"</span>,
+    <span class="key">"sources"</span>: [<span class="str">"senshi"</span>, <span class="str">"animeheaven"</span>, <span class="str">"miruro"</span>, <span class="str">"anikoto"</span>]
+  },
   <span class="key">"timestamp"</span>: <span class="str">"2026-06-04T12:00:00.000Z"</span>
 }</pre>
         </div>
