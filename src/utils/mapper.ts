@@ -152,9 +152,9 @@ export async function getSiteIds(anilistId: number): Promise<SiteIds | null> {
 // AniList-free fallback: build SiteIds from a MAL ID alone (title comes from
 // your own MAL scraper instead of AniList's getAnilistTitle). Used when
 // malToAnilist can't resolve an AniList ID (AniList down/blocked). Note:
-// zoro/gogoanime via Anify and Miruro episodes both key off anilistId, so
+// zoro/gogoanime via Anify both key off anilistId, so
 // those stay unavailable here -- everything keyed off title (animeheaven,
-// anikoto) or malId (senshi) still works normally.
+// anikoto) still works normally.
 export async function getSiteIdsByMal(malId: number): Promise<SiteIds | null> {
   const cacheKey = `siteids:mal:${malId}`;
   const cached = cacheGet<SiteIds>(cacheKey);
