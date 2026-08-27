@@ -1412,22 +1412,49 @@ router.get('/episode', async (req: Request, res: Response) => {
     // currently lists and pad in whatever tail episodes MAL is missing,
     // sourcing those extra rows through the same TMDB -> AniList -> Kitsu
     // chain (MAL skipped, since it's the source that's missing them).
+    //
+    // Only do this when MAL's OWN stated episode total for this entry
+    // (details.episodes -- the "Episodes:" field on the anime's MAL page)
+    // is itself bigger than what we scraped. That field is specific to
+    // *this* malId, unlike TMDB's episode count, which is per-franchise:
+    // MAL gives every season of a show its own malId (Attack on Titan S1 is
+    // malId 16498 with 25 episodes, S2/S3/S4 are separate IDs), but TMDB
+    // bundles every season into one show with one combined episode count.
+    // Comparing MAL's scraped count straight against TMDB's franchise total
+    // (what this used to do) meant every split-by-season MAL entry looked
+    // "incomplete" and got padded with the next seasons' episodes tacked on
+    // the end -- which is exactly the "season 1 shows all 4 seasons" bug.
+    // MAL's own per-entry total sidesteps that: it agrees with malEpisodes
+    // .length for a complete/finished entry (S1 says 25, scrape found 25,
+    // no padding), and is null/still-climbing for a genuinely ongoing show
+    // like One Piece, where the check still catches MAL's scrape lagging
+    // behind reality.
     const lastMalEp = malEpisodes[malEpisodes.length - 1]?.malId ?? episodes.length;
-    let tmdbCount: number | null = null;
-    if (details) {
-      const rawTitles = [...new Set([details.titleEnglish, details.title, details.titleJapanese].filter(
-        (t): t is string => !!t
-      ))];
-      const dummyLog: string[] = [];
-      const { titles } = computeTmdbTitleCandidates(rawTitles, dummyLog);
-      for (const t of titles) {
-        const found = await getTmdbEpisodeCount(t).catch(() => null);
-        if (found) { tmdbCount = found.count; break; }
-      }
-    }
+    const malStatedTotal = details?.episodes ?? null;
 
-    if (tmdbCount && tmdbCount > lastMalEp) {
-      const missingNums = Array.from({ length: tmdbCount - lastMalEp }, (_, i) => lastMalEp + 1 + i);
+    if (malStatedTotal && malStatedTotal > lastMalEp) {
+      let tmdbCount: number | null = null;
+      if (details) {
+        const rawTitles = [...new Set([details.titleEnglish, details.title, details.titleJapanese].filter(
+          (t): t is string => !!t
+        ))];
+        const dummyLog: string[] = [];
+        const { titles } = computeTmdbTitleCandidates(rawTitles, dummyLog);
+        for (const t of titles) {
+          const found = await getTmdbEpisodeCount(t).catch(() => null);
+          if (found) { tmdbCount = found.count; break; }
+        }
+      }
+
+      // Pad up to whichever is smaller of "what MAL itself claims this
+      // entry has" and "what TMDB's franchise-wide count would allow" --
+      // never past malStatedTotal, so a split-season MAL entry can never
+      // gain episodes belonging to a different season/malId even if a
+      // title-search false-positive matched the wrong TMDB show.
+      const targetTotal = tmdbCount ? Math.min(malStatedTotal, tmdbCount) : malStatedTotal;
+
+      if (targetTotal > lastMalEp) {
+      const missingNums = Array.from({ length: targetTotal - lastMalEp }, (_, i) => lastMalEp + 1 + i);
       const padded = await mapWithConcurrency(missingNums, concurrency, async (num) => {
         // knownMalEpisode: null (not undefined) -- these are exactly the
         // episodes MAL's own list didn't have, so skip MAL entirely instead
@@ -1448,6 +1475,7 @@ router.get('/episode', async (req: Request, res: Response) => {
       // Only keep padded rows that actually resolved to something -- an
       // empty TMDB placeholder row is worse than just stopping at MAL's count.
       episodes.push(...padded.filter((e) => e.title));
+      }
     }
 
     return res.json({
