@@ -1413,26 +1413,33 @@ router.get('/episode', async (req: Request, res: Response) => {
     // sourcing those extra rows through the same TMDB -> AniList -> Kitsu
     // chain (MAL skipped, since it's the source that's missing them).
     //
-    // Only do this when MAL's OWN stated episode total for this entry
-    // (details.episodes -- the "Episodes:" field on the anime's MAL page)
-    // is itself bigger than what we scraped. That field is specific to
-    // *this* malId, unlike TMDB's episode count, which is per-franchise:
-    // MAL gives every season of a show its own malId (Attack on Titan S1 is
-    // malId 16498 with 25 episodes, S2/S3/S4 are separate IDs), but TMDB
-    // bundles every season into one show with one combined episode count.
-    // Comparing MAL's scraped count straight against TMDB's franchise total
-    // (what this used to do) meant every split-by-season MAL entry looked
-    // "incomplete" and got padded with the next seasons' episodes tacked on
-    // the end -- which is exactly the "season 1 shows all 4 seasons" bug.
-    // MAL's own per-entry total sidesteps that: it agrees with malEpisodes
-    // .length for a complete/finished entry (S1 says 25, scrape found 25,
-    // no padding), and is null/still-climbing for a genuinely ongoing show
-    // like One Piece, where the check still catches MAL's scrape lagging
-    // behind reality.
+    // Gating this on "is MAL's own stated total bigger than what we
+    // scraped" (details.episodes vs lastMalEp) alone -- what this did right
+    // after the AoT fix -- broke padding for every currently-airing show:
+    // MAL shows "Episodes: Unknown" while a show is still airing, so
+    // details.episodes is null for One Piece, and `if (malStatedTotal &&
+    // ...)` silently skipped padding entirely, bringing back the original
+    // 1174-vs-1175 bug this was built to fix.
+    //
+    // The actual distinction that matters is airing status, not whether
+    // MAL happened to print a number:
+    //  - Still airing (status "Currently Airing"): MAL's total is
+    //    necessarily unknown/growing, so there's nothing to bound padding
+    //    against from MAL's side -- allow it, bounded by TMDB's count.
+    //  - Finished, with a stated total bigger than the scrape: MAL's own
+    //    page says there should be more than we found -- pad up to that
+    //    stated total specifically (still the AoT-fix guard: never padded
+    //    past what MAL itself claims *this entry* has, so a split-season
+    //    MAL id like Attack on Titan S1 can't inherit S2's episodes just
+    //    because TMDB's franchise-wide count is bigger).
+    //  - Finished, stated total already matches the scrape: no padding,
+    //    regardless of what TMDB's franchise total says (the AoT case).
     const lastMalEp = malEpisodes[malEpisodes.length - 1]?.malId ?? episodes.length;
     const malStatedTotal = details?.episodes ?? null;
+    const isAiring = details?.status === 'Currently Airing';
+    const malScrapeLooksIncomplete = isAiring || (malStatedTotal !== null && malStatedTotal > lastMalEp);
 
-    if (malStatedTotal && malStatedTotal > lastMalEp) {
+    if (malScrapeLooksIncomplete) {
       let tmdbCount: number | null = null;
       if (details) {
         const rawTitles = [...new Set([details.titleEnglish, details.title, details.titleJapanese].filter(
@@ -1446,12 +1453,15 @@ router.get('/episode', async (req: Request, res: Response) => {
         }
       }
 
-      // Pad up to whichever is smaller of "what MAL itself claims this
-      // entry has" and "what TMDB's franchise-wide count would allow" --
-      // never past malStatedTotal, so a split-season MAL entry can never
-      // gain episodes belonging to a different season/malId even if a
-      // title-search false-positive matched the wrong TMDB show.
-      const targetTotal = tmdbCount ? Math.min(malStatedTotal, tmdbCount) : malStatedTotal;
+      // Pad up to whichever cap actually applies:
+      //  - MAL states a total for this entry -> never pad past it (the
+      //    split-season guard), further capped by TMDB's count if smaller.
+      //  - MAL's total is unknown (still airing) -> nothing from MAL to
+      //    cap against, so TMDB's count is the only ceiling; if TMDB has
+      //    no count either, there's nothing to pad with.
+      const targetTotal = malStatedTotal !== null
+        ? (tmdbCount ? Math.min(malStatedTotal, tmdbCount) : malStatedTotal)
+        : (tmdbCount ?? lastMalEp);
 
       if (targetTotal > lastMalEp) {
       const missingNums = Array.from({ length: targetTotal - lastMalEp }, (_, i) => lastMalEp + 1 + i);
