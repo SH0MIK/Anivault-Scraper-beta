@@ -1055,7 +1055,7 @@ async function resolveEpisode(
     const { titles, seasonHint } = computeTmdbTitleCandidates(rawTitles, log);
 
     for (const t of titles) {
-      const { result, log: srcLog } = await getTmdbEpisodeData(t, epNum, seasonHint, isList);
+      const { result, log: srcLog } = await getTmdbEpisodeData(t, epNum, seasonHint, isList, malEpisode?.aired ?? null);
       log.push(...srcLog);
       if (result) {
         if (result.title) { title = result.title; aired = result.aired; infoSource = 'tmdb'; }
