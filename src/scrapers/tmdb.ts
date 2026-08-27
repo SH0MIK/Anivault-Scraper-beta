@@ -298,16 +298,29 @@ async function getShowSeasons(showId: number, log: string[]): Promise<TmdbSeason
  * Returns TWO candidate (season, epInSeason) pairs for that season, because
  * TMDB is inconsistent about whether a season's own episode_number field
  * resets to 1 or keeps counting the absolute number straight through:
- *   1) epInSeason = absoluteEp itself (unchanged) -- this is what long-
- *      running shonen imported into TMDB via TheTVDB's "aired order" tend
- *      to do. Confirmed directly against TMDB for this exact case: Naruto
- *      Shippuden's season 3 episodes are numbered 54-71, NOT 1-18, even
- *      though the season only has 18 episodes in it.
- *   2) epInSeason = the season-relative remainder (54-53=1 here) -- the
- *      "normal" TMDB convention most shows actually follow.
- * Tried in that order (absolute first, since it's the case this was
- * actually seen failing on) so a show using either convention resolves on
- * the first real request instead of needing a match to fail first.
+ *   1) epInSeason = the season-relative remainder (54-53=1 here) -- the
+ *      "normal" TMDB convention almost every show follows (season resets
+ *      its own numbering to 1).
+ *   2) epInSeason = absoluteEp itself (unchanged) -- what long-running
+ *      shonen imported into TMDB via TheTVDB's "aired order" sometimes do
+ *      instead. Confirmed directly against TMDB: Naruto Shippuden's season
+ *      3 episodes are numbered 54-71, NOT 1-18, even though the season only
+ *      has 18 episodes in it.
+ *
+ * Relative is tried FIRST now (this used to be absolute-first). Reason:
+ * for a split-cour/multi-part show where a season's own episode_count is
+ * large enough to comfortably contain the raw absolute number too (e.g.
+ * Mushoku Tensei season 2 has 25 episodes, numbered 0-24 including a recap
+ * special) -- absolute-first would silently match a DIFFERENT real episode
+ * within that same season instead of 404ing, e.g. absoluteEp=24 spuriously
+ * hit season 2's own episode 24 (the finale) instead of its actual target,
+ * episode 1 (relative = 24-23) the premiere, because "episode 24" simply
+ * happened to also exist in that season and matched before relative was
+ * ever tried. Relative-first avoids that class of wrong-but-real match for
+ * every show following the normal convention, while the Shippuden-style
+ * case above still resolves correctly on the fallback: season 3 doesn't
+ * have an "episode 1" on TMDB (it's numbered 54+ there), so the relative
+ * candidate 404s and absolute is tried next as before.
  */
 function mapAbsoluteEpisode(seasons: TmdbSeasonInfo[], absoluteEp: number): Array<{ season: number; epInSeason: number }> {
   let cumulative = 0;
@@ -317,13 +330,14 @@ function mapAbsoluteEpisode(seasons: TmdbSeasonInfo[], absoluteEp: number): Arra
     cumulative += s.episode_count;
     if (absoluteEp <= cumulative) {
       const relative = absoluteEp - before;
-      const candidates = [{ season: s.season_number, epInSeason: absoluteEp }];
-      if (relative !== absoluteEp) candidates.push({ season: s.season_number, epInSeason: relative });
+      const candidates = [{ season: s.season_number, epInSeason: relative }];
+      if (absoluteEp !== relative) candidates.push({ season: s.season_number, epInSeason: absoluteEp });
       return candidates;
     }
   }
   return [];
 }
+
 
 // Shared by getEpisodeThumbnail and getEpisodeInfo below -- both need the
 // same "which (season, epInSeason) pairs could absoluteEp map to" list, just
@@ -588,12 +602,34 @@ export interface TmdbEpisodeDataResult {
  * a caller that wants both; getEpisodeThumbnail/getEpisodeInfo stay as they
  * are for callers (the standalone /tmdb/episode-thumb route) that only need
  * one or the other.
+ *
+ * `expectedAired` (MAL's own air date for this absolute episode number, when
+ * the caller has it) is a sanity check against mapAbsoluteEpisode's inherent
+ * ambiguity: for a split-cour/multi-part show a season can be long enough
+ * that BOTH the relative and the absolute candidate exist as real episodes
+ * in that season -- not a 404, an actual wrong-but-present match (this is
+ * exactly what happened to Mushoku Tensei ep24, which spuriously matched
+ * season 2's own episode 24, its finale, instead of episode 1, its
+ * premiere). A candidate whose air_date is more than ~3 weeks from what MAL
+ * already recorded for this episode number is rejected and the next
+ * candidate is tried instead of trusting the first one that merely exists.
  */
+const EXPECTED_AIRED_TOLERANCE_MS = 21 * 24 * 60 * 60 * 1000; // ~3 weeks
+
+function airedMismatch(candidateAired: string | null, expectedAired: string | null | undefined): boolean {
+  if (!candidateAired || !expectedAired) return false; // nothing to compare against -- allow it
+  const a = Date.parse(candidateAired);
+  const b = Date.parse(expectedAired);
+  if (Number.isNaN(a) || Number.isNaN(b)) return false;
+  return Math.abs(a - b) > EXPECTED_AIRED_TOLERANCE_MS;
+}
+
 export async function getEpisodeData(
   animeTitle: string,
   epNum: number,
   seasonHint: number | null = null,
-  isList = false
+  isList = false,
+  expectedAired: string | null = null
 ): Promise<TmdbEpisodeDataResult> {
   const log: string[] = [];
 
@@ -606,8 +642,11 @@ export async function getEpisodeData(
   if (!isList) {
     const cached = cacheGet<TmdbEpisodeData | null>(cacheKey);
     if (cached !== null) {
-      log.push('TMDB: cache hit');
-      return { result: cached, log };
+      if (!airedMismatch(cached.aired, expectedAired)) {
+        log.push('TMDB: cache hit');
+        return { result: cached, log };
+      }
+      log.push(`TMDB: cache hit but air date (${cached.aired}) doesn't match MAL's (${expectedAired}) -- refetching`);
     }
   }
 
@@ -631,6 +670,10 @@ export async function getEpisodeData(
         log.push(`TMDB ${show.name} s${season}e${epInSeason}: ${name || still ? `found (name=${!!name}, still=${!!still})` : 'no episode data'}`);
 
         if (name || still) {
+          if (airedMismatch(airDate, expectedAired)) {
+            log.push(`TMDB s${season}e${epInSeason}: air date ${airDate} is way off MAL's ${expectedAired} for this episode -- likely the wrong season/episode match, trying next candidate`);
+            continue;
+          }
           const result: TmdbEpisodeData = {
             showId,
             showName: show.name,
