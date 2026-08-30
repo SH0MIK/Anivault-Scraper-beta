@@ -49,6 +49,7 @@ there's no multi-step resolution required the way playback has.
 |---|---|---|
 | **AnimeHeaven** (animeheaven.me) | ✅ Verified | Not behind Cloudflare — direct MP4 sources |
 | **Anikoto** (anikoto.net) | ✅ Verified | Megacloud/Megaplay decryption + a direct-CDN side channel |
+| **DesiDub** (desidubanime.me) | ✅ Verified | Hindi & regional multi-audio dubs + subs (VidMoly, StreamRuby, EarnVids, Mirror) |
 
 ### Metadata & art
 
@@ -80,7 +81,7 @@ Resolve an anime's AniList/MAL IDs and per-source site IDs.
 | `malId` | one of these | |
 ```
 GET /api/info?malId=20
-→ { anilistId, malId, title, siteIds: { zoro, animeheaven, anikoto, ... } }
+→ { anilistId, malId, title, siteIds: { zoro, animeheaven, anikoto, desidub, ... } }
 ```
 
 #### `GET /api/episodes`
@@ -88,10 +89,11 @@ List episodes for a title on a given source.
 | Param | Required | Notes |
 |---|---|---|
 | `anilistId` / `malId` | yes* | *unless `heavenId` is used with `source=animeheaven` |
-| `source` | no | `animeheaven` \| `anikoto` (default `anikoto`) |
+| `source` | no | `animeheaven` \| `anikoto` \| `desidub` (default `anikoto`) |
 | `heavenId` | no | manual AnimeHeaven show id |
 ```
 GET /api/episodes?anilistId=20&source=anikoto
+GET /api/episodes?malId=16498&source=desidub
 → { anilistId, malId, title, source, siteId, count, episodes[] }
 ```
 
@@ -102,10 +104,11 @@ List available servers (sub/dub) for a specific episode.
 | `anilistId` / `malId` | yes* | |
 | `ep` | **yes** | episode number |
 | `type` | no | `sub` \| `dub` \| `all` (default `sub`) |
-| `source` | no | see note above — pass explicitly |
+| `source` | no | `animeheaven` \| `anikoto` \| `desidub` |
 | `heavenId` | no | manual AnimeHeaven show id |
 ```
 GET /api/servers?anilistId=20&ep=1&type=sub&source=anikoto
+GET /api/servers?malId=16498&ep=1&type=dub&source=desidub
 → { anilistId, malId, title, episode, type, source, servers[] }
 ```
 
@@ -113,7 +116,7 @@ GET /api/servers?anilistId=20&ep=1&type=sub&source=anikoto
 Resolve a real, playable stream for an episode — the main playback endpoint.
 | Path param | Notes |
 |---|---|
-| `source` | `animeheaven` \| `anikoto` |
+| `source` | `animeheaven` \| `anikoto` \| `desidub` |
 | `id` | AniList id (or `mal-{id}`, or AnimeHeaven id) |
 | `ep` | episode number |
 | `type` | `sub` \| `dub` |
@@ -125,7 +128,7 @@ Resolve a real, playable stream for an episode — the main playback endpoint.
 
 ```
 GET /api/watch/anikoto/20/1/sub
-GET /api/watch/anikoto/mal-21/5/dub?server=Megacloud
+GET /api/watch/desidub/mal-16498/1/dub?server=VMoly
 → { embedUrl, m3u8, hlsProxyUrl, playbackMode, subtitles[], server, availableServers[], ... }
 ```
 
