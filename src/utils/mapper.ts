@@ -5,15 +5,21 @@ import { findAnimeHeavenId } from '../scrapers/animeheaven';
 import { findAnikotoSlug } from '../scrapers/anikoto';
 import { findDesidubSlug } from '../scrapers/desidub';
 import { getAnimeDetails } from '../scrapers/mal';
+import { findReanimeSlug } from '../scrapers/reanime';
+import { findAninekoSlug } from '../scrapers/anineko';
+import { findAnizoneSlug } from '../scrapers/anizone';
+import { findAnimeggSlug } from '../scrapers/animegg';
+import { findAnidbappSlug } from '../scrapers/anidbapp';
+import { findAnimenosubSlug } from '../scrapers/animenosub';
 
 export interface SiteIds {
   anilistId: number | null;
   malId: number | null;
   title: string;
   // Secondary title candidate (opposite of `title`'s romaji/English choice)
-  // used only to retry site-matching (Anikoto/AnimeHeaven/DesiDub) when the primary
-  // title doesn't score a good match. Not part of the public /info response
-  // (routes.ts only ever destructures the named fields it wants).
+  // used only to retry site-matching when the primary title doesn't score a
+  // good match. Not part of the public /info response (routes.ts only ever
+  // destructures the named fields it wants).
   altTitle?: string | null;
   siteIds: {
     zoro?: string;
@@ -22,6 +28,17 @@ export interface SiteIds {
     anidao?: string;
     anikoto?: string;
     desidub?: string;
+    reanime?: string;
+    anineko?: string;
+    anizone?: string;
+    animegg?: string;
+    anidbapp?: string;
+    animenosub?: string;
+    // Keyed directly by malId/anilistId — no search/enrichment needed.
+    senshi?: string;
+    dhive?: string;
+    animedunya?: string;
+    anibd?: string;
   };
 }
 
@@ -72,6 +89,70 @@ async function enrichDesidub(result: SiteIds, altTitle?: string | null): Promise
   return result;
 }
 
+async function enrichReanime(result: SiteIds): Promise<SiteIds> {
+  if (result.siteIds.reanime || result.title === 'Unknown') return result;
+  const slug = await findReanimeSlug(result.title, result.malId).catch(() => null);
+  if (slug) result.siteIds.reanime = slug;
+  return result;
+}
+
+async function enrichAnineko(result: SiteIds, altTitle?: string | null): Promise<SiteIds> {
+  if (result.siteIds.anineko || result.title === 'Unknown') return result;
+  const slug = await findAninekoSlug(result.title, altTitle).catch(() => null);
+  if (slug) result.siteIds.anineko = slug;
+  return result;
+}
+
+async function enrichAnizone(result: SiteIds, altTitle?: string | null): Promise<SiteIds> {
+  if (result.siteIds.anizone || result.title === 'Unknown') return result;
+  const slug = await findAnizoneSlug(result.title, altTitle).catch(() => null);
+  if (slug) result.siteIds.anizone = slug;
+  return result;
+}
+
+async function enrichAnimegg(result: SiteIds, altTitle?: string | null): Promise<SiteIds> {
+  if (result.siteIds.animegg || result.title === 'Unknown') return result;
+  const slug = await findAnimeggSlug(result.title, altTitle).catch(() => null);
+  if (slug) result.siteIds.animegg = slug;
+  return result;
+}
+
+async function enrichAnidbapp(result: SiteIds, altTitle?: string | null): Promise<SiteIds> {
+  if (result.siteIds.anidbapp || result.title === 'Unknown') return result;
+  const slug = await findAnidbappSlug(result.title, altTitle).catch(() => null);
+  if (slug) result.siteIds.anidbapp = slug;
+  return result;
+}
+
+async function enrichAnimenosub(result: SiteIds, altTitle?: string | null): Promise<SiteIds> {
+  if (result.siteIds.animenosub || result.title === 'Unknown') return result;
+  const slug = await findAnimenosubSlug(result.title, altTitle).catch(() => null);
+  if (slug) result.siteIds.animenosub = slug;
+  return result;
+}
+
+// senshi/dhive/animedunya are keyed directly by malId, anibd directly by
+// anilistId — no title search needed, just copy the id over when present.
+function enrichDirectIds(result: SiteIds): SiteIds {
+  if (result.malId) {
+    if (!result.siteIds.senshi) result.siteIds.senshi = String(result.malId);
+    if (!result.siteIds.dhive) result.siteIds.dhive = String(result.malId);
+    if (!result.siteIds.animedunya) result.siteIds.animedunya = String(result.malId);
+  }
+  if (result.anilistId && !result.siteIds.anibd) result.siteIds.anibd = String(result.anilistId);
+  return result;
+}
+
+async function enrichAllNewSources(result: SiteIds, altTitle?: string | null): Promise<SiteIds> {
+  await enrichReanime(result);
+  await enrichAnineko(result, altTitle);
+  await enrichAnizone(result, altTitle);
+  await enrichAnimegg(result, altTitle);
+  await enrichAnidbapp(result, altTitle);
+  await enrichAnimenosub(result, altTitle);
+  return enrichDirectIds(result);
+}
+
 // MAL ID → AniList ID
 // Returns null (never throws) if AniList is down/unreachable -- callers use
 // that as the signal to fall back to the MAL-only path (getSiteIdsByMal).
@@ -114,13 +195,12 @@ export async function getSiteIds(anilistId: number): Promise<SiteIds | null> {
   const cacheKey = `siteids:${anilistId}`;
   const cached = cacheGet<SiteIds>(cacheKey);
   if (cached) {
-    const wasMissingAnimeHeaven = !cached.siteIds.animeheaven;
-    const wasMissingAnikoto = !cached.siteIds.anikoto;
-    const wasMissingDesidub = !cached.siteIds.desidub;
-    const enriched = await enrichDesidub(await enrichAnikoto(await enrichAnimeHeaven(cached, cached.altTitle), cached.altTitle), cached.altTitle);
-    if ((wasMissingAnimeHeaven && enriched.siteIds.animeheaven) || (wasMissingAnikoto && enriched.siteIds.anikoto) || (wasMissingDesidub && enriched.siteIds.desidub)) {
-      cacheSet(cacheKey, enriched);
-    }
+    const before = JSON.stringify(cached.siteIds);
+    const enriched = await enrichAllNewSources(
+      await enrichDesidub(await enrichAnikoto(await enrichAnimeHeaven(cached, cached.altTitle), cached.altTitle), cached.altTitle),
+      cached.altTitle
+    );
+    if (JSON.stringify(enriched.siteIds) !== before) cacheSet(cacheKey, enriched);
     return enriched;
   }
 
@@ -155,6 +235,7 @@ export async function getSiteIds(anilistId: number): Promise<SiteIds | null> {
   await enrichAnimeHeaven(result, result.altTitle);
   await enrichAnikoto(result, result.altTitle);
   await enrichDesidub(result, result.altTitle);
+  await enrichAllNewSources(result, result.altTitle);
 
   // If still no zoro ID, try a slug guess (title-anilistId format common on HiAnime clones)
   // This is a heuristic and may not always work
@@ -177,13 +258,12 @@ export async function getSiteIdsByMal(malId: number): Promise<SiteIds | null> {
   const cacheKey = `siteids:mal:${malId}`;
   const cached = cacheGet<SiteIds>(cacheKey);
   if (cached) {
-    const wasMissingAnimeHeaven = !cached.siteIds.animeheaven;
-    const wasMissingAnikoto = !cached.siteIds.anikoto;
-    const wasMissingDesidub = !cached.siteIds.desidub;
-    const enriched = await enrichDesidub(await enrichAnikoto(await enrichAnimeHeaven(cached, cached.altTitle), cached.altTitle), cached.altTitle);
-    if ((wasMissingAnimeHeaven && enriched.siteIds.animeheaven) || (wasMissingAnikoto && enriched.siteIds.anikoto) || (wasMissingDesidub && enriched.siteIds.desidub)) {
-      cacheSet(cacheKey, enriched);
-    }
+    const before = JSON.stringify(cached.siteIds);
+    const enriched = await enrichAllNewSources(
+      await enrichDesidub(await enrichAnikoto(await enrichAnimeHeaven(cached, cached.altTitle), cached.altTitle), cached.altTitle),
+      cached.altTitle
+    );
+    if (JSON.stringify(enriched.siteIds) !== before) cacheSet(cacheKey, enriched);
     return enriched;
   }
 
@@ -208,6 +288,7 @@ export async function getSiteIdsByMal(malId: number): Promise<SiteIds | null> {
   await enrichAnimeHeaven(result, result.altTitle);
   await enrichAnikoto(result, result.altTitle);
   await enrichDesidub(result, result.altTitle);
+  await enrichAllNewSources(result, result.altTitle);
 
   cacheSet(cacheKey, result);
   return result;

@@ -8,6 +8,17 @@ import { resolveEmbed } from './resolvers/megacloud';
 import { getHeavenEpisodes, getHeavenServers, getHeavenStream } from './scrapers/animeheaven';
 import { getAnikotoEpisodes, getAnikotoServers, getAnikotoEmbedUrl } from './scrapers/anikoto';
 import { getDesidubEpisodes, getDesidubServers, getDesidubStream } from './scrapers/desidub';
+import { getReanimeEpisodes, getReanimeServers, getReanimeEmbedUrl } from './scrapers/reanime';
+import { getAninekoEpisodes, getAninekoServers, getAninekoEmbedUrl } from './scrapers/anineko';
+import { getAnizoneEpisodes, getAnizoneServers, getAnizoneEmbedUrl } from './scrapers/anizone';
+import { getDhiveEpisodes, getDhiveServers, getDhiveEmbedUrl } from './scrapers/dhive';
+import { getKaaEpisodes, getKaaServers, getKaaEmbedUrl } from './scrapers/kaa';
+import { getSenshiEpisodes, getSenshiServers, getSenshiEmbedUrl } from './scrapers/senshi';
+import { getAnimeggEpisodes, getAnimeggServers, getAnimeggEmbedUrl } from './scrapers/animegg';
+import { getAnibdEpisodes, getAnibdServers, getAnibdEmbedUrl } from './scrapers/anibd';
+import { getAnimedunyaEpisodes, getAnimedunyaServers, getAnimedunyaEmbedUrl } from './scrapers/animedunya';
+import { getAnidbappEpisodes, getAnidbappServers, getAnidbappEmbedUrl } from './scrapers/anidbapp';
+import { getAnimenosubEpisodes, getAnimenosubServers, getAnimenosubEmbedUrl } from './scrapers/animenosub';
 import { getAnimeDetails, getEpisodes as getMalEpisodes, getEpisode as getMalEpisode, getAllEpisodes as getAllMalEpisodes, getCharacters, getCharacterDetails, getAnimePictures, getCharacterPictures, getAnimeThemes, getAnimeVideos, getRecommendations, searchAnime, getExternalLinks, getStreamingPlatforms, debugSearchHtml, MalEpisode } from './scrapers/mal';
 import { getSeasonNow, getTopBanners, getStreamingEpisodes, AniListStreamingEpisode, getAnimeImages as getAnilistAnimeImages } from './scrapers/anilist';
 import { getEpisodeThumbnail as getTmdbEpisodeThumbnail, getEpisodeData as getTmdbEpisodeData, getShowEpisodeCount as getTmdbEpisodeCount, getAnimeImages as getTmdbAnimeImages, extractSeasonHint } from './scrapers/tmdb';
@@ -15,7 +26,11 @@ import { getKitsuAnimeId, getEpisodeThumbnail as getKitsuEpisodeThumbnail, getEp
 
 const router = Router();
 
-const SOURCES = ['animeheaven', 'anikoto', 'desidub'] as const;
+const SOURCES = [
+  'animeheaven', 'anikoto', 'desidub',
+  'reanime', 'anineko', 'anizone', 'dhive', 'kaa',
+  'senshi', 'animegg', 'anibd', 'animedunya', 'anidbapp', 'animenosub',
+] as const;
 type Source = typeof SOURCES[number];
 
 function publicBase(req: Request): string {
@@ -122,6 +137,61 @@ async function fetchEpisodes(source: Source, siteIds: any, overrides: { heavenId
     if (!slug) return { episodes: [], siteId: '', error: 'Not indexed on DesiDub' };
     return { episodes: await getDesidubEpisodes(slug), siteId: slug };
   }
+  if (source === 'reanime') {
+    const slug = siteIds.siteIds?.reanime as string | undefined;
+    if (!slug) return { episodes: [], siteId: '', error: 'Not indexed on ReAnime' };
+    return { episodes: await getReanimeEpisodes(slug), siteId: slug };
+  }
+  if (source === 'anineko') {
+    const slug = siteIds.siteIds?.anineko as string | undefined;
+    if (!slug) return { episodes: [], siteId: '', error: 'Not indexed on AniNeko' };
+    return { episodes: await getAninekoEpisodes(slug), siteId: slug };
+  }
+  if (source === 'anizone') {
+    const slug = siteIds.siteIds?.anizone as string | undefined;
+    if (!slug) return { episodes: [], siteId: '', error: 'Not indexed on AniZone' };
+    return { episodes: await getAnizoneEpisodes(slug), siteId: slug };
+  }
+  if (source === 'dhive') {
+    const id = siteIds.siteIds?.dhive as string | undefined;
+    if (!id) return { episodes: [], siteId: '', error: 'Missing MAL ID for 2dhive' };
+    return { episodes: await getDhiveEpisodes(id), siteId: id };
+  }
+  if (source === 'kaa') {
+    const slug = siteIds.siteIds?.kaa as string | undefined;
+    if (!slug) return { episodes: [], siteId: '', error: 'Not indexed on KAA' };
+    return { episodes: await getKaaEpisodes(slug), siteId: slug };
+  }
+  if (source === 'senshi') {
+    const id = siteIds.siteIds?.senshi as string | undefined;
+    if (!id) return { episodes: [], siteId: '', error: 'Missing MAL ID for Senshi' };
+    return { episodes: await getSenshiEpisodes(id), siteId: id };
+  }
+  if (source === 'animegg') {
+    const slug = siteIds.siteIds?.animegg as string | undefined;
+    if (!slug) return { episodes: [], siteId: '', error: 'Not indexed on AnimeGG' };
+    return { episodes: await getAnimeggEpisodes(slug), siteId: slug };
+  }
+  if (source === 'anibd') {
+    const id = siteIds.siteIds?.anibd as string | undefined;
+    if (!id) return { episodes: [], siteId: '', error: 'Missing AniList ID for AniBD' };
+    return { episodes: await getAnibdEpisodes(id), siteId: id };
+  }
+  if (source === 'animedunya') {
+    const id = siteIds.siteIds?.animedunya as string | undefined;
+    if (!id) return { episodes: [], siteId: '', error: 'Missing MAL ID for AnimeDunya' };
+    return { episodes: await getAnimedunyaEpisodes(id), siteId: id };
+  }
+  if (source === 'anidbapp') {
+    const slug = siteIds.siteIds?.anidbapp as string | undefined;
+    if (!slug) return { episodes: [], siteId: '', error: 'Not indexed on AniDB.app' };
+    return { episodes: await getAnidbappEpisodes(slug), siteId: slug };
+  }
+  if (source === 'animenosub') {
+    const slug = siteIds.siteIds?.animenosub as string | undefined;
+    if (!slug) return { episodes: [], siteId: '', error: 'Not indexed on AnimeNoSub' };
+    return { episodes: await getAnimenosubEpisodes(slug), siteId: slug };
+  }
   return { episodes: [], siteId: '', error: 'Unknown source' };
 }
 
@@ -223,6 +293,17 @@ router.get('/servers', async (req: Request, res: Response) => {
     if (source === 'animeheaven') allServers = await getHeavenServers(episode.id);
     if (source === 'anikoto') allServers = await getAnikotoServers(episode.id);
     if (source === 'desidub') allServers = await getDesidubServers(episode.id);
+    if (source === 'reanime') allServers = await getReanimeServers(episode.id);
+    if (source === 'anineko') allServers = await getAninekoServers(episode.id);
+    if (source === 'anizone') allServers = await getAnizoneServers(episode.id);
+    if (source === 'dhive') allServers = await getDhiveServers(episode.id);
+    if (source === 'kaa') allServers = await getKaaServers(episode.id);
+    if (source === 'senshi') allServers = await getSenshiServers(episode.id);
+    if (source === 'animegg') allServers = await getAnimeggServers(episode.id);
+    if (source === 'anibd') allServers = await getAnibdServers(episode.id);
+    if (source === 'animedunya') allServers = await getAnimedunyaServers(episode.id);
+    if (source === 'anidbapp') allServers = await getAnidbappServers(episode.id);
+    if (source === 'animenosub') allServers = await getAnimenosubServers(episode.id);
 
     const filtered = type === 'all' ? allServers : allServers.filter((s: any) => s.type === type);
     return res.json({
@@ -270,6 +351,17 @@ async function watchHandler(req: Request, res: Response) {
     if (source === 'animeheaven') allServers = await getHeavenServers(episode.id);
     if (source === 'anikoto') allServers = await getAnikotoServers(episode.id);
     if (source === 'desidub') allServers = await getDesidubServers(episode.id);
+    if (source === 'reanime') allServers = await getReanimeServers(episode.id);
+    if (source === 'anineko') allServers = await getAninekoServers(episode.id);
+    if (source === 'anizone') allServers = await getAnizoneServers(episode.id);
+    if (source === 'dhive') allServers = await getDhiveServers(episode.id);
+    if (source === 'kaa') allServers = await getKaaServers(episode.id);
+    if (source === 'senshi') allServers = await getSenshiServers(episode.id);
+    if (source === 'animegg') allServers = await getAnimeggServers(episode.id);
+    if (source === 'anibd') allServers = await getAnibdServers(episode.id);
+    if (source === 'animedunya') allServers = await getAnimedunyaServers(episode.id);
+    if (source === 'anidbapp') allServers = await getAnidbappServers(episode.id);
+    if (source === 'animenosub') allServers = await getAnimenosubServers(episode.id);
 
     const filtered = type === 'all'
       ? allServers
@@ -302,6 +394,17 @@ async function watchHandler(req: Request, res: Response) {
       if (source === 'animeheaven') raw = await getHeavenStream(server.sourceId);
       if (source === 'anikoto') raw = await getAnikotoEmbedUrl(server.sourceId);
       if (source === 'desidub') raw = await getDesidubStream(server.sourceId);
+      if (source === 'reanime') raw = await getReanimeEmbedUrl(server.sourceId);
+      if (source === 'anineko') raw = await getAninekoEmbedUrl(server.sourceId);
+      if (source === 'anizone') raw = await getAnizoneEmbedUrl(server.sourceId);
+      if (source === 'dhive') raw = await getDhiveEmbedUrl(server.sourceId);
+      if (source === 'kaa') raw = await getKaaEmbedUrl(server.sourceId);
+      if (source === 'senshi') raw = await getSenshiEmbedUrl(server.sourceId);
+      if (source === 'animegg') raw = await getAnimeggEmbedUrl(server.sourceId);
+      if (source === 'anibd') raw = await getAnibdEmbedUrl(server.sourceId);
+      if (source === 'animedunya') raw = await getAnimedunyaEmbedUrl(server.sourceId);
+      if (source === 'anidbapp') raw = await getAnidbappEmbedUrl(server.sourceId);
+      if (source === 'animenosub') raw = await getAnimenosubEmbedUrl(server.sourceId);
       if (raw) { embedResult = raw; usedServer = server.name; break; }
     }
     if (!embedResult) {
@@ -389,6 +492,38 @@ async function watchHandler(req: Request, res: Response) {
         intro: null,
         outro: null,
         note: isHls || isMp4 ? null : 'No direct stream extracted — use embedUrl in an iframe.',
+      });
+    }
+
+    // The 11 sources below all resolve their own stream fully inside
+    // getXEmbedUrl (direct m3u8/HLS, or null → iframe-only fallback) — same
+    // pattern as the anikoto branch above — so they skip resolveEmbed() too.
+    const PRERESOLVED_SOURCES: Source[] = [
+      'reanime', 'anineko', 'anizone', 'dhive', 'kaa',
+      'senshi', 'animegg', 'anibd', 'animedunya', 'anidbapp', 'animenosub',
+    ];
+    if (PRERESOLVED_SOURCES.includes(source as Source)) {
+      return res.json({
+        anilistId: siteIds.anilistId,
+        malId: siteIds.malId,
+        title: siteIds.title,
+        episode: epNum,
+        type,
+        source,
+        server: usedServer,
+        availableServers: filtered.map((s: any) => s.name),
+        embedUrl: embedResult.embedUrl,
+        m3u8: embedResult.m3u8 ?? null,
+        hlsProxyUrl: embedResult.m3u8 ? proxiedHlsUrl(req, embedResult.m3u8, embedResult.referer) : null,
+        playbackMode: embedResult.m3u8 ? 'hls' : 'iframe',
+        iframeOnly: !embedResult.m3u8,
+        subtitles: (embedResult.subtitles ?? []).map((s: any) => ({
+          ...s,
+          url: proxiedSubtitleUrl(req, s.url, embedResult.referer),
+        })),
+        intro: embedResult.intro ?? null,
+        outro: embedResult.outro ?? null,
+        note: embedResult.m3u8 ? null : 'No m3u8 available — use embedUrl in an iframe.',
       });
     }
 
@@ -1619,7 +1754,7 @@ router.get('/health', (_req, res) => {
     status: 'ok',
     checks: { process: process_, cache },
     external: {},
-    meta: { version: '1.1.0-anikoto', sources: SOURCES },
+    meta: { version: '1.2.0-multisource', sources: SOURCES },
     timestamp: new Date().toISOString(),
   });
 });
