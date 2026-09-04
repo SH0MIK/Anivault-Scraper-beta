@@ -93,7 +93,7 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
 .str{color:#98c379} .kw{color:#c678dd} .num{color:#d19a66} .key{color:#61afef} .cmt{color:#5c6370;font-style:italic}
 
 /* sources grid */
-.sources-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+.sources-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
 @media (max-width:900px) { .sources-grid { grid-template-columns:1fr; } }
 .source-info-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:24px; }
 .sic-header { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
@@ -327,7 +327,7 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
     <p class="hero-desc">A unified REST API to fetch anime stream URLs and embed links across multiple sources, addressed by MAL or AniList ID. Railway-ready, zero config.</p>
     <div class="hero-pills">
       <span class="pill live">Online</span>
-      <span class="pill">3 Streaming Sources</span>
+      <span class="pill">4 Streaming Sources</span>
       <span class="pill">MAL Scraper</span>
       <span class="pill">TMDB · Kitsu · AniList</span>
       <span class="pill">Sub · Dub · Raw</span>
@@ -377,135 +377,14 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
 
       <div class="source-info-card">
         <div class="sic-header">
-          <div class="sic-icon">🔓</div>
-          <div><div class="sic-name">ReAnime</div><div class="sic-url">reanime.to</div></div>
-          <span class="sic-tag works">WASM-decrypted HLS</span>
+          <div class="sic-icon">AW</div>
+          <div><div class="sic-name">AnimeWorld</div><div class="sic-url">watchanimeworld.one</div></div>
+          <span class="sic-tag works">Zephyrix HLS</span>
         </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">reanime</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">Title/MAL-search slug</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">FlixCloud (HD-1/HD-2)</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">🐾</div>
-          <div><div class="sic-name">AniNeko</div><div class="sic-url">anineko.to</div></div>
-          <span class="sic-tag works">Direct HLS</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">anineko</span></div>
+        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">watchanimeworld</span></div>
         <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">Title-search slug</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">AniNeko embeds</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">🌀</div>
-          <div><div class="sic-name">AniZone</div><div class="sic-url">anizone.to</div></div>
-          <span class="sic-tag works">Direct HLS + subs</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">anizone</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">Title-search slug</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">AniZone player</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub only</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">🐝</div>
-          <div><div class="sic-name">2dhive</div><div class="sic-url">2dhive.com</div></div>
-          <span class="sic-tag">Iframe (MegaPlay)</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">dhive</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">MAL ID</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">MegaPlay (iframe)</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub (if available)</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">👊</div>
-          <div><div class="sic-name">KAA</div><div class="sic-url">kaa.lt</div></div>
-          <span class="sic-tag works">Direct HLS</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">kaa</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">Title-search slug</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">krussdomi HLS manifest</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub (if available)</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">⚔️</div>
-          <div><div class="sic-name">Senshi</div><div class="sic-url">senshi.live</div></div>
-          <span class="sic-tag works">Direct HLS / embed</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">senshi</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">MAL ID</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">Senshi HLS, StreamNin, FileMoon</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">🥚</div>
-          <div><div class="sic-name">AnimeGG</div><div class="sic-url">animegg.org</div></div>
-          <span class="sic-tag">Direct MP4 / iframe</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">animegg</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">Title-search slug</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">videoSources direct files</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">📀</div>
-          <div><div class="sic-name">AniBD</div><div class="sic-url">epeng.animeapps.top</div></div>
-          <span class="sic-tag works">Direct HLS / iframe</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">anibd</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">AniList ID</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">Provider mirrors via apilink.php</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">🕌</div>
-          <div><div class="sic-name">AnimeDunya</div><div class="sic-url">anime-dunya.com</div></div>
-          <span class="sic-tag works">Direct HLS + subs</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">animedunya</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">MAL ID</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">AnimeDunya player</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub only</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">🅰️</div>
-          <div><div class="sic-name">AniDB.app</div><div class="sic-url">anidb.app</div></div>
-          <span class="sic-tag">May hit Cloudflare</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">anidbapp</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">Title-search slug</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">Per-language embed URLs</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub</span></div>
-        <div class="sic-row"><span class="sic-row-label">Note</span><span class="sic-row-val">No FlareSolverr — plain headers only, may get CF-blocked</span></div>
-      </div>
-
-      <div class="source-info-card">
-        <div class="sic-header">
-          <div class="sic-icon">🎌</div>
-          <div><div class="sic-name">AnimeNoSub</div><div class="sic-url">animenosub.to</div></div>
-          <span class="sic-tag works">Byse/Nova/Vidmoly decrypt</span>
-        </div>
-        <div class="sic-row"><span class="sic-row-label">Key</span><span class="sic-row-val">animenosub</span></div>
-        <div class="sic-row"><span class="sic-row-label">ID format</span><span class="sic-row-val">Title-search slug</span></div>
-        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">Byse, Nova, Vidmoly</span></div>
-        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Sub, Dub (per series)</span></div>
+        <div class="sic-row"><span class="sic-row-label">Servers</span><span class="sic-row-val">Play</span></div>
+        <div class="sic-row"><span class="sic-row-label">Audio</span><span class="sic-row-val">Multi-audio / Dub</span></div>
       </div>
     </div>
   </section>
@@ -521,19 +400,15 @@ pre { padding:20px; overflow-x:auto; font-family:var(--mono); font-size:12px; li
 
 GET /api/watch/<span class="str">anikoto</span>/<span class="num">20</span>/<span class="num">1</span>/<span class="str">sub</span>
 GET /api/watch/<span class="str">desidub</span>/mal-<span class="num">16498</span>/<span class="num">1</span>/<span class="str">dub</span>?server=VMoly
-GET /api/watch/<span class="str">animeheaven</span>/<span class="str">{heavenId}</span>/<span class="num">3</span>/<span class="str">sub</span>
-GET /api/watch/<span class="str">reanime</span>/<span class="num">20</span>/<span class="num">1</span>/<span class="str">sub</span>
-GET /api/watch/<span class="str">kaa</span>/mal-<span class="num">16498</span>/<span class="num">1</span>/<span class="str">sub</span></pre>
+GET /api/watch/<span class="str">animeheaven</span>/<span class="str">{heavenId}</span>/<span class="num">3</span>/<span class="str">sub</span></pre>
     </div>
     <div class="code-block">
       <div class="code-header">Query-based (compat) <button class="copy-btn" onclick="copyBlock(this)">Copy</button></div>
       <pre>GET /api/watch?source=<span class="str">desidub</span>&malId=<span class="num">16498</span>&ep=<span class="num">1</span>&type=<span class="str">dub</span>
 GET /api/watch?source=<span class="str">anikoto</span>&anilistId=<span class="num">20</span>&ep=<span class="num">1</span>&type=<span class="str">sub</span>
-GET /api/watch?source=<span class="str">animeheaven</span>&heavenId=<span class="str">ukr6y</span>&ep=<span class="num">5</span>&type=<span class="str">sub</span>
-GET /api/watch?source=<span class="str">reanime</span>&malId=<span class="num">16498</span>&ep=<span class="num">1</span>&type=<span class="str">sub</span></pre>
+GET /api/watch?source=<span class="str">animeheaven</span>&heavenId=<span class="str">ukr6y</span>&ep=<span class="num">5</span>&type=<span class="str">sub</span></pre>
     </div>
   </section>
-
 
   <!-- ENDPOINTS -->
   <section class="section" id="ep-search">
@@ -620,7 +495,7 @@ GET /api/watch?source=<span class="str">reanime</span>&malId=<span class="num">1
           <thead><tr><th>Param</th><th>Type</th><th>Required</th><th>Description</th></tr></thead>
           <tbody>
             <tr><td class="param-name">anilistId / malId</td><td class="param-type">number</td><td><span class="req-badge">one required</span></td><td>Anime identifier</td></tr>
-            <tr><td class="param-name">source</td><td class="param-type">string</td><td><span class="opt-badge">optional</span></td><td>animeheaven · anikoto · desidub · reanime · anineko · anizone · dhive · kaa · senshi · animegg · anibd · animedunya · anidbapp · animenosub</td></tr>
+            <tr><td class="param-name">source</td><td class="param-type">string</td><td><span class="opt-badge">optional</span></td><td>animeheaven · anikoto · desidub · watchanimeworld</td></tr>
           </tbody>
         </table>
         <div class="code-block">
@@ -650,7 +525,7 @@ GET /api/watch?source=<span class="str">reanime</span>&malId=<span class="num">1
             <tr><td class="param-name">anilistId / malId</td><td class="param-type">number</td><td><span class="req-badge">one required</span></td><td>Anime identifier</td></tr>
             <tr><td class="param-name">ep</td><td class="param-type">number</td><td><span class="req-badge">required</span></td><td>Episode number</td></tr>
             <tr><td class="param-name">type</td><td class="param-type">string</td><td><span class="opt-badge">optional</span></td><td>sub · dub · raw · all (default: sub)</td></tr>
-            <tr><td class="param-name">source</td><td class="param-type">string</td><td><span class="opt-badge">optional</span></td><td>animeheaven · anikoto · desidub · reanime · anineko · anizone · dhive · kaa · senshi · animegg · anibd · animedunya · anidbapp · animenosub</td></tr>
+            <tr><td class="param-name">source</td><td class="param-type">string</td><td><span class="opt-badge">optional</span></td><td>animeheaven · anikoto · desidub · watchanimeworld</td></tr>
           </tbody>
         </table>
         <div class="code-block">
@@ -678,7 +553,7 @@ GET /api/watch?source=<span class="str">reanime</span>&malId=<span class="num">1
         <table class="params-table">
           <thead><tr><th>Param</th><th>Type</th><th>Where</th><th>Description</th></tr></thead>
           <tbody>
-            <tr><td class="param-name">source</td><td class="param-type">string</td><td>path</td><td>animeheaven · anikoto · desidub · reanime · anineko · anizone · dhive · kaa · senshi · animegg · anibd · animedunya · anidbapp · animenosub</td></tr>
+            <tr><td class="param-name">source</td><td class="param-type">string</td><td>path</td><td>animeheaven · anikoto · desidub · watchanimeworld</td></tr>
             <tr><td class="param-name">id</td><td class="param-type">string</td><td>path</td><td>AniList ID or "mal-{malId}"</td></tr>
             <tr><td class="param-name">ep</td><td class="param-type">number</td><td>path</td><td>Episode number</td></tr>
             <tr><td class="param-name">type</td><td class="param-type">string</td><td>path</td><td>sub · dub · raw</td></tr>
@@ -694,6 +569,8 @@ GET /api/watch?source=<span class="str">reanime</span>&malId=<span class="num">1
   <span class="key">"availableServers"</span>: [<span class="str">"Megacloud"</span>, <span class="str">"Vidstreaming"</span>],
   <span class="key">"embedUrl"</span>: <span class="str">"https://megacloud.blog/embed-2/e-1/AbCdEf"</span>,
   <span class="key">"m3u8"</span>: <span class="str">"https://cdn.megacloud.blog/hls/abc/master.m3u8"</span>,
+  <span class="key">"audioTracks"</span>: [{ <span class="key">"name"</span>: <span class="str">"Hindi"</span>, <span class="key">"hlsProxyUrl"</span>: <span class="str">"http://.../api/proxy/hls?url=..."</span> }],
+  <span class="key">"qualities"</span>: [{ <span class="key">"label"</span>: <span class="str">"1080p"</span>, <span class="key">"hlsProxyUrl"</span>: <span class="str">"http://.../api/proxy/hls?url=..."</span> }],
   <span class="key">"subtitles"</span>: [{ <span class="key">"lang"</span>: <span class="str">"English"</span>, <span class="key">"url"</span>: <span class="str">"https://.../en.vtt"</span>, <span class="key">"default"</span>: <span class="kw">true</span> }],
   <span class="key">"intro"</span>: { <span class="key">"start"</span>: <span class="num">0</span>, <span class="key">"end"</span>: <span class="num">90</span> },
   <span class="key">"outro"</span>: { <span class="key">"start"</span>: <span class="num">1350</span>, <span class="key">"end"</span>: <span class="num">1440</span> },
@@ -739,8 +616,8 @@ GET /api/watch?source=<span class="str">reanime</span>&malId=<span class="num">1
   },
   <span class="key">"external"</span>: {},
   <span class="key">"meta"</span>: {
-    <span class="key">"version"</span>: <span class="str">"1.2.0-multisource"</span>,
-    <span class="key">"sources"</span>: [<span class="str">"animeheaven"</span>, <span class="str">"anikoto"</span>, <span class="str">"desidub"</span>, <span class="str">"reanime"</span>, <span class="str">"anineko"</span>, <span class="str">"anizone"</span>, <span class="str">"dhive"</span>, <span class="str">"kaa"</span>, <span class="str">"senshi"</span>, <span class="str">"animegg"</span>, <span class="str">"anibd"</span>, <span class="str">"animedunya"</span>, <span class="str">"anidbapp"</span>, <span class="str">"animenosub"</span>]
+    <span class="key">"version"</span>: <span class="str">"1.1.0-anikoto"</span>,
+    <span class="key">"sources"</span>: [<span class="str">"animeheaven"</span>, <span class="str">"anikoto"</span>, <span class="str">"desidub"</span>, <span class="str">"watchanimeworld"</span>]
   },
   <span class="key">"timestamp"</span>: <span class="str">"2026-06-04T12:00:00.000Z"</span>
 }</pre>
@@ -1355,60 +1232,10 @@ GET /api/watch?source=<span class="str">reanime</span>&malId=<span class="num">1
             <span class="source-name">DesiDub</span>
             <span class="source-url">desidubanime.me</span>
           </div>
-          <div class="source-card" onclick="setSource('reanime',this)" id="src-reanime">
-            <div class="source-icon">🔓</div>
-            <span class="source-name">ReAnime</span>
-            <span class="source-url">reanime.to</span>
-          </div>
-          <div class="source-card" onclick="setSource('anineko',this)" id="src-anineko">
-            <div class="source-icon">🐾</div>
-            <span class="source-name">AniNeko</span>
-            <span class="source-url">anineko.to</span>
-          </div>
-          <div class="source-card" onclick="setSource('anizone',this)" id="src-anizone">
-            <div class="source-icon">🌀</div>
-            <span class="source-name">AniZone</span>
-            <span class="source-url">anizone.to</span>
-          </div>
-          <div class="source-card" onclick="setSource('dhive',this)" id="src-dhive">
-            <div class="source-icon">🐝</div>
-            <span class="source-name">2dhive</span>
-            <span class="source-url">2dhive.com</span>
-          </div>
-          <div class="source-card" onclick="setSource('kaa',this)" id="src-kaa">
-            <div class="source-icon">👊</div>
-            <span class="source-name">KAA</span>
-            <span class="source-url">kaa.lt</span>
-          </div>
-          <div class="source-card" onclick="setSource('senshi',this)" id="src-senshi">
-            <div class="source-icon">⚔️</div>
-            <span class="source-name">Senshi</span>
-            <span class="source-url">senshi.live</span>
-          </div>
-          <div class="source-card" onclick="setSource('animegg',this)" id="src-animegg">
-            <div class="source-icon">🥚</div>
-            <span class="source-name">AnimeGG</span>
-            <span class="source-url">animegg.org</span>
-          </div>
-          <div class="source-card" onclick="setSource('anibd',this)" id="src-anibd">
-            <div class="source-icon">📀</div>
-            <span class="source-name">AniBD</span>
-            <span class="source-url">epeng.animeapps.top</span>
-          </div>
-          <div class="source-card" onclick="setSource('animedunya',this)" id="src-animedunya">
-            <div class="source-icon">🕌</div>
-            <span class="source-name">AnimeDunya</span>
-            <span class="source-url">anime-dunya.com</span>
-          </div>
-          <div class="source-card" onclick="setSource('anidbapp',this)" id="src-anidbapp">
-            <div class="source-icon">🅰️</div>
-            <span class="source-name">AniDB.app</span>
-            <span class="source-url">anidb.app</span>
-          </div>
-          <div class="source-card" onclick="setSource('animenosub',this)" id="src-animenosub">
-            <div class="source-icon">🎌</div>
-            <span class="source-name">AnimeNoSub</span>
-            <span class="source-url">animenosub.to</span>
+          <div class="source-card" onclick="setSource('watchanimeworld',this)" id="src-watchanimeworld">
+            <div class="source-icon">AW</div>
+            <span class="source-name">AnimeWorld</span>
+            <span class="source-url">watchanimeworld.one</span>
           </div>
         </div>
 
@@ -1684,7 +1511,9 @@ async function loadServers() {
       const chip = document.createElement('div');
       chip.className = 'server-chip';
       chip.dataset.server = s.name;
-      chip.textContent = s.name + (s.type !== selType ? ` (${s.type})` : '');
+      const qualityLabels = Array.isArray(s.qualities) ? s.qualities.map(q => q.label).filter(Boolean) : [];
+      chip.title = qualityLabels.length ? `${s.name}: ${qualityLabels.join(', ')}` : s.name;
+      chip.textContent = s.name + (qualityLabels.length ? ` (${qualityLabels[0]}-${qualityLabels[qualityLabels.length - 1]})` : '') + (s.type !== selType ? ` (${s.type})` : '');
       chip.onclick = () => selectServer(chip);
       chips.appendChild(chip);
     });
@@ -1884,6 +1713,9 @@ function renderEmbedPreview(data) {
       hls.loadSource(hlsUrl);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (Array.isArray(hls.levels) && hls.levels.length > 0) {
+          hls.currentLevel = hls.levels.length - 1;
+        }
         video.play().catch(() => {});
       });
       hls.on(Hls.Events.ERROR, (event, errData) => {
@@ -1987,6 +1819,14 @@ async function doFetch() {
         <div class="stream-card">
           <div class="stream-card-label">Available Servers</div>
           <div class="stream-card-val">${serverNames.join(', ') || '<span class="null-val">-</span>'}</div>
+        </div>
+        <div class="stream-card">
+          <div class="stream-card-label">Audio Tracks</div>
+          <div class="stream-card-val">${(data.audioTracks||[]).map(t=>`${t.name || t.lang}${t.default?' *':''}`).join(', ') || '<span class="null-val">None</span>'}</div>
+        </div>
+        <div class="stream-card">
+          <div class="stream-card-label">Qualities</div>
+          <div class="stream-card-val">${(data.qualities||[]).map(q=>q.label).join(', ') || '<span class="null-val">Auto</span>'}</div>
         </div>
         <div class="stream-card">
           <div class="stream-card-label">Subtitles</div>

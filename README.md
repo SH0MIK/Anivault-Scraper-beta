@@ -88,7 +88,7 @@ List episodes for a title on a given source.
 | Param | Required | Notes |
 |---|---|---|
 | `anilistId` / `malId` | yes* | *unless `heavenId` is used with `source=animeheaven` |
-| `source` | no | `animeheaven` \| `anikoto` (default `anikoto`) |
+| `source` | no | `animeheaven` \| `anikoto` \| `desidub` \| `watchanimeworld` (default `anikoto`) |
 | `heavenId` | no | manual AnimeHeaven show id |
 ```
 GET /api/episodes?anilistId=20&source=anikoto
@@ -101,7 +101,7 @@ List available servers (sub/dub) for a specific episode.
 |---|---|---|
 | `anilistId` / `malId` | yes* | |
 | `ep` | **yes** | episode number |
-| `type` | no | `sub` \| `dub` \| `all` (default `sub`) |
+| `type` | no | `sub` \| `dub` \| `raw` \| `all` (default `sub`) |
 | `source` | no | see note above — pass explicitly |
 | `heavenId` | no | manual AnimeHeaven show id |
 ```
@@ -113,10 +113,10 @@ GET /api/servers?anilistId=20&ep=1&type=sub&source=anikoto
 Resolve a real, playable stream for an episode — the main playback endpoint.
 | Path param | Notes |
 |---|---|
-| `source` | `animeheaven` \| `anikoto` |
+| `source` | `animeheaven` \| `anikoto` \| `desidub` \| `watchanimeworld` |
 | `id` | AniList id (or `mal-{id}`, or AnimeHeaven id) |
 | `ep` | episode number |
-| `type` | `sub` \| `dub` |
+| `type` | `sub` \| `dub` \| `raw` |
 
 | Query param | Notes |
 |---|---|
@@ -126,7 +126,7 @@ Resolve a real, playable stream for an episode — the main playback endpoint.
 ```
 GET /api/watch/anikoto/20/1/sub
 GET /api/watch/anikoto/mal-21/5/dub?server=Megacloud
-→ { embedUrl, m3u8, hlsProxyUrl, playbackMode, subtitles[], server, availableServers[], ... }
+→ { embedUrl, m3u8, hlsProxyUrl, playbackMode, subtitles[], audioTracks[], qualities[], server, availableServers[], ... }
 ```
 
 #### `GET /api/watch`
